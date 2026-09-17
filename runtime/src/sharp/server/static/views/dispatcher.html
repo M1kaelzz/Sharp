@@ -1,0 +1,138 @@
+<div x-show="view === 'dispatcher'" x-cloak class="flex-1 flex flex-col overflow-hidden">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0">
+        <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+          <path d="M4 6h16M4 12h16M4 18h16"/>
+          <circle cx="8" cy="6" r="1.5" fill="currentColor" stroke="none"/>
+          <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+          <circle cx="16" cy="18" r="1.5" fill="currentColor" stroke="none"/>
+        </svg>
+      </div>
+      <div>
+        <span class="font-semibold text-slate-700 tracking-tight">调度器状态</span>
+        <p class="text-[11px] text-slate-400">Worker 运行快照，每次心跳自动写回</p>
+      </div>
+    </div>
+    <div class="flex-1"></div>
+    <button @click="loadDispatcherStatus()" :disabled="dispatcherStatusLoading"
+      class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40">刷新</button>
+  </header>
+    <div class="flex-1 overflow-auto bg-slate-50 p-4">
+      <!-- 汇总状态卡 -->
+      <template x-if="!dispatcherStatusLoading && dispatcherStatus.length > 0">
+        <div class="rounded-xl border bg-white p-4 mb-4 shadow-sm flex flex-wrap items-center gap-4"
+          :class="dispatcherStatus.some(e=>e.data.running_task_count>0) ? 'border-teal-200' : 'border-slate-200'">
+          <template x-if="dispatcherStatus.some(e=>e.data.running_task_count>0)">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-teal-500 animate-pulse shrink-0"></span>
+              <span class="text-sm font-semibold text-teal-700">运行中</span>
+            </div>
+          </template>
+          <template x-if="!dispatcherStatus.some(e=>e.data.running_task_count>0)">
+            <div class="flex items-center gap-2">
+              <span class="h-2 w-2 rounded-full bg-emerald-400 shrink-0"></span>
+              <span class="text-sm font-semibold text-emerald-700">就绪 / 空闲</span>
+            </div>
+          </template>
+          <div class="flex flex-wrap gap-2 text-xs text-slate-500">
+            <span class="px-2 py-0.5 rounded-full bg-slate-100"
+              x-text="`活跃 Dispatcher：${dispatcherStatus.filter(e=>!dispatcherIsStale(e.updated_at)).length}`"></span>
+            <span class="px-2 py-0.5 rounded-full bg-slate-100"
+              x-text="`运行任务：${dispatcherStatus.reduce((s,e)=>s+(e.data.running_task_count||0),0)}`"></span>
+            <span class="px-2 py-0.5 rounded-full bg-slate-100"
+              x-text="`最大并发：${dispatcherStatus[0]?.data?.runtime?.max_workers || '-'}`"></span>
+          </div>
+        </div>
+      </template>
+      <template x-if="dispatcherStatusLoading">
+        <div class="rounded-xl border border-slate-200 bg-white px-5 py-8 text-center text-sm text-slate-400">正在读取状态...</div>
+      </template>
+      <template x-if="!dispatcherStatusLoading && dispatcherStatus.length === 0">
+        <div class="rounded-xl border border-dashed border-slate-200 bg-white px-5 py-12 text-center">
+          <div class="flex items-center justify-center gap-2 mb-2">
+            <span class="h-2 w-2 rounded-full bg-slate-300 shrink-0"></span>
+            <span class="text-sm font-medium text-slate-400">未收到心跳</span>
+          </div>
+          <p class="text-xs text-slate-400">确认调度器已启动（<code class="font-mono">./sharp web</code>），或检查是否选了<code class="font-mono">--no-dispatch</code></p>
+        </div>
+      </template>
+      <div class="space-y-4" x-show="!dispatcherStatusLoading && dispatcherStatus.length > 0">
+        <template x-for="entry in dispatcherStatus" :key="entry.dispatcher_id">
+          <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="font-mono text-sm font-semibold text-slate-700 break-all" x-text="entry.dispatcher_id"></div>
+                <div class="mt-1 text-xs text-slate-400">
+                  <span x-text="formatDate(entry.updated_at)"></span>
+                  <span class="mx-1">·</span>
+                  <span x-text="dispatcherStatusAge(entry.updated_at)"></span>
+                </div>
+              </div>
+              <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                <span x-show="dispatcherIsStale(entry.updated_at)" class="rounded-full bg-rose-50 text-rose-600 border border-rose-100 px-2 py-1">僵尸</span>
+                <span class="rounded-full bg-slate-100 px-2 py-1" x-text="`运行任务 ${entry.data.running_task_count || 0}/${entry.data.runtime?.max_workers || '-'}`"></span>
+                <span class="rounded-full bg-slate-100 px-2 py-1" x-text="`项目 ${entry.data.projects?.length || 0}`"></span>
+                <span class="rounded-full bg-slate-100 px-2 py-1" x-text="`Prompt ${entry.data.runtime?.prompt_group || '-'}`"></span>
+                <button @click="deleteDispatcherStatus(entry.dispatcher_id)" class="rounded-full border border-rose-200 text-rose-500 px-2 py-1 hover:bg-rose-50 transition">删除</button>
+              </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
+                <div class="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Workers</div>
+                <div class="space-y-2">
+                  <template x-for="worker in (entry.data.workers || [])" :key="worker.name">
+                    <div class="rounded-lg border border-slate-200 px-3 py-2">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="font-mono text-xs text-slate-700" x-text="worker.name"></span>
+                        <span class="rounded-full px-2 py-0.5 text-[10px] font-medium" :class="dispatcherWorkerBadgeClass(worker)" x-text="dispatcherWorkerState(worker)"></span>
+                      </div>
+                      <div class="mt-1 flex flex-wrap gap-1.5 text-[10px] text-slate-400">
+                        <span x-text="worker.type"></span>
+                        <span x-text="`running ${worker.running}/${worker.max_running}`"></span>
+                        <span x-text="`p${worker.priority}`"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <div>
+                <div class="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Running Tasks</div>
+                <div class="space-y-2">
+                  <template x-if="!(entry.data.running_tasks || []).length">
+                    <div class="rounded-lg border border-slate-200 px-3 py-3 text-xs text-slate-400">当前没有运行中的任务</div>
+                  </template>
+                  <template x-for="task in (entry.data.running_tasks || [])" :key="`${task.project_id}-${task.task_type}-${task.worker}-${task.intent_id || 'reason'}`">
+                    <div class="rounded-lg border border-slate-200 px-3 py-2 text-xs">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="font-medium text-slate-700" x-text="`${task.project_id} · ${task.task_type}`"></span>
+                        <span class="font-mono text-slate-400" x-text="task.worker"></span>
+                      </div>
+                      <div class="mt-1 text-slate-400" x-text="task.intent_id ? `intent ${task.intent_id}` : 'project reason'"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4">
+              <div class="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Skip Reasons</div>
+              <template x-if="!(entry.data.skip_reasons || []).length">
+                <div class="rounded-lg border border-slate-200 px-3 py-3 text-xs text-slate-400">暂无调度跳过原因</div>
+              </template>
+              <div class="space-y-1.5">
+                <template x-for="reason in (entry.data.skip_reasons || [])" :key="reason.scope">
+                  <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                    <div class="font-mono text-[10px] text-slate-400" x-text="reason.scope"></div>
+                    <div class="mt-0.5 text-slate-600 break-words" x-text="reason.message"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+</div>

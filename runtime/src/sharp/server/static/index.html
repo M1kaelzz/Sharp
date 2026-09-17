@@ -1,0 +1,2028 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sharp 自动化渗透测试</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/favicon-512.png">
+<script src="/static/vendor/tailwindcss.js"></script>
+<script src="/static/vendor/dagre.min.js"></script>
+<script src="/static/vendor/cytoscape.min.js"></script>
+<script src="/static/vendor/cytoscape-dagre.js"></script>
+<script src="/static/vendor/klay.js"></script>
+<script src="/static/vendor/cytoscape-klay.js"></script>
+<script src="/static/vendor/elk.bundled.js"></script>
+<script src="/static/vendor/cytoscape-elk.js"></script>
+<script src="/static/vendor/cytoscape-navigator.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<script defer src="/static/vendor/alpine.min.js"></script>
+<style>
+  [x-cloak] { display: none !important; }
+  #cy { width: 100%; height: 100%; }
+
+  /* 浅色主题证据图底色：白底 + 极淡浅蓝网格（与主界面风格统一） */
+  body:not(.theme-cyber) #cy {
+    background:
+      linear-gradient(rgba(56, 189, 248, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+      linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%) !important;
+    background-size: 28px 28px, 28px 28px, auto !important;
+  }
+
+  /* cytoscape-navigator 小地图：右下角，白底浅蓝边框 */
+  .cytoscape-navigator {
+    position: fixed;
+    right: 12px;
+    bottom: 44px;
+    width: 176px;
+    height: 124px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+    padding: 8px;
+    z-index: 900;
+    overflow: hidden;
+  }
+  .cytoscape-navigator img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+  .cytoscape-navigatorView {
+    position: absolute;
+    border: 1.5px solid #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    border-radius: 2px;
+  }
+  .cytoscape-navigatorOverlay {
+    position: absolute;
+    background: rgba(15, 23, 42, 0.1);
+    border: 1.5px solid #38bdf8;
+    cursor: move;
+  }
+
+  /* 深色主题适配 */
+  body.theme-cyber .cytoscape-navigator {
+    background: #0b1220;
+    border-color: rgba(34, 211, 238, 0.35);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  }
+  body.theme-cyber .cytoscape-navigatorView {
+    border-color: rgba(34, 211, 238, 0.7);
+    background: rgba(34, 211, 238, 0.15);
+  }
+  body.theme-cyber .cytoscape-navigatorOverlay {
+    border-color: rgba(34, 211, 238, 0.7);
+    background: rgba(0, 0, 0, 0.25);
+  }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  .overlay { background: rgba(15,23,42,0.25); backdrop-filter: blur(6px); }
+  .timeline-flash { animation: timelineFlash 1s ease-out; }
+  .reason-chip-running { animation: reasonChipGlow 1.8s ease-in-out infinite; }
+  .intent-chip-running { animation: intentChipGlow 1.8s ease-in-out infinite; }
+  .reason-panel-running::before {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: 22px;
+    background: radial-gradient(circle, rgba(56, 189, 248, 0.14), rgba(56, 189, 248, 0));
+    animation: reasonPanelPulse 2.1s ease-out infinite;
+    pointer-events: none;
+  }
+  .reason-beacon {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: #0ea5e9;
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, 0.16);
+  }
+  .reason-beacon::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: 9999px;
+    border: 1.5px solid rgba(14, 165, 233, 0.34);
+    animation: reasonBeaconPulse 1.8s ease-out infinite;
+  }
+  .reason-graph-scan {
+    position: absolute;
+    inset: 8px;
+    overflow: hidden;
+    pointer-events: none;
+    border-radius: 18px;
+  }
+  .reason-graph-scan::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow:
+      inset 0 0 0 1px rgba(125, 211, 252, 0.32),
+      inset 0 0 30px rgba(125, 211, 252, 0.06),
+      inset 0 0 64px rgba(56, 189, 248, 0.03);
+    animation: reasonFramePulse 2.8s ease-in-out infinite;
+  }
+  .reason-graph-scan::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    inset: 12px;
+    border-radius: 12px;
+    background:
+      linear-gradient(90deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
+      linear-gradient(180deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
+      linear-gradient(270deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18)),
+      linear-gradient(0deg, rgba(125, 211, 252, 0.85), rgba(125, 211, 252, 0.18));
+    background-size: 18px 2px, 2px 18px, 18px 2px, 2px 18px;
+    background-position: left top, left top, right bottom, right bottom;
+    background-repeat: no-repeat;
+    opacity: 0.6;
+  }
+  .reason-graph-scan > span {
+    position: absolute;
+    inset: 0;
+    display: block;
+  }
+  .reason-graph-grid {
+    inset: 12px;
+    border-radius: 12px;
+    background:
+      repeating-linear-gradient(
+        90deg,
+        rgba(186, 230, 253, 0) 0,
+        rgba(186, 230, 253, 0) 35px,
+        rgba(186, 230, 253, 0.022) 36px,
+        rgba(186, 230, 253, 0.022) 37px
+      ),
+      repeating-linear-gradient(
+        180deg,
+        rgba(186, 230, 253, 0) 0,
+        rgba(186, 230, 253, 0) 35px,
+        rgba(186, 230, 253, 0.02) 36px,
+        rgba(186, 230, 253, 0.02) 37px
+      );
+    opacity: 0.22;
+  }
+  .reason-graph-scanline {
+    inset: 0;
+  }
+  .reason-graph-scanline::before {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    height: 2px;
+    top: 12%;
+    background: linear-gradient(90deg, rgba(56, 189, 248, 0), rgba(186, 230, 253, 0.72), rgba(56, 189, 248, 0));
+    box-shadow:
+      0 0 12px rgba(125, 211, 252, 0.28);
+    animation: reasonGraphScanline 4.2s linear infinite;
+  }
+  .title-action-trigger {
+    min-width: 0;
+  }
+  .title-action-button {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+    transition: opacity 180ms ease, transform 180ms ease, background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .title-action-button {
+      opacity: 0;
+      transform: translateY(2px);
+      pointer-events: none;
+    }
+    .title-action-trigger:hover .title-action-button,
+    .title-action-trigger:focus-within .title-action-button {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+  }
+  @keyframes timelineFlash {
+    0% { background: rgba(99, 102, 241, 0.18); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.2); }
+    35% { background: rgba(99, 102, 241, 0.12); box-shadow: 0 0 0 8px rgba(99, 102, 241, 0.08); }
+    100% { background: rgba(99, 102, 241, 0); box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
+  }
+  @keyframes reasonBeaconPulse {
+    0% { transform: scale(0.72); opacity: 0.9; }
+    70% { transform: scale(1.45); opacity: 0; }
+    100% { transform: scale(1.45); opacity: 0; }
+  }
+  @keyframes reasonPanelPulse {
+    0% { transform: scale(0.96); opacity: 0; }
+    18% { opacity: 1; }
+    70% { transform: scale(1.02); opacity: 0.18; }
+    100% { transform: scale(1.03); opacity: 0; }
+  }
+  @keyframes reasonChipGlow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.18); }
+    50% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0.08); }
+  }
+  @keyframes intentChipGlow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.18); }
+    50% { box-shadow: 0 0 0 7px rgba(251, 191, 36, 0.08); }
+  }
+  @keyframes reasonGraphScanline {
+    0% { top: 11%; opacity: 0.12; }
+    8% { opacity: 0.38; }
+    50% { opacity: 0.28; }
+    92% { opacity: 0.38; }
+    100% { top: 87%; opacity: 0.12; }
+  }
+  @keyframes reasonFramePulse {
+    0%, 100% { opacity: 0.72; }
+    50% { opacity: 1; }
+  }
+
+  @font-face {
+    font-family: "ArkPixel";
+    src: url("/static/fonts/ark-pixel-12px-monospaced-zh_cn.ttf.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  :root {
+    --cyber-bg: #020203;
+    --cyber-bg-panel: #08090b;
+    --cyber-bg-elevated: #0d1014;
+    --cyber-bg-soft: #11151b;
+    --cyber-border: rgba(148, 163, 184, 0.24);
+    --cyber-border-strong: rgba(255, 107, 44, 0.48);
+    --cyber-text: #f4f4f5;
+    --cyber-muted: #a1a1aa;
+    --cyber-dim: #71717a;
+    --cyber-orange: #ff6b2c;
+    --cyber-orange-soft: rgba(255, 107, 44, 0.14);
+    --cyber-cyan: #22d3ee;
+    --cyber-cyan-soft: rgba(34, 211, 238, 0.12);
+    --cyber-green: #00e676;
+    --cyber-green-soft: rgba(0, 230, 118, 0.12);
+    --cyber-amber: #fbbf24;
+    --cyber-rose: #fb7185;
+    --cyber-radius: 4px;
+    --cyber-shadow: 0 16px 42px rgba(0, 0, 0, 0.42);
+  }
+
+  body.theme-cyber {
+    color: var(--cyber-text) !important;
+    background:
+      linear-gradient(rgba(34, 211, 238, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 211, 238, 0.028) 1px, transparent 1px),
+      linear-gradient(180deg, #050608 0%, #020203 100%) !important;
+    background-size: 36px 36px, 36px 36px, auto !important;
+  }
+
+  body.theme-cyber::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 9999;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0) 2px),
+      repeating-linear-gradient(180deg, rgba(255,255,255,0.025) 0, rgba(255,255,255,0.025) 1px, transparent 1px, transparent 4px);
+    mix-blend-mode: screen;
+    opacity: 0.16;
+  }
+
+  .theme-cyber ::-webkit-scrollbar-thumb {
+    background: rgba(255, 107, 44, 0.48);
+    border-radius: 0;
+  }
+
+  .theme-cyber header {
+    background: rgba(8, 9, 11, 0.88) !important;
+    border-color: var(--cyber-border) !important;
+    box-shadow: inset 0 -1px 0 rgba(255, 107, 44, 0.22), 0 10px 30px rgba(0,0,0,0.28);
+    position: relative;
+    flex-wrap: nowrap !important;
+    min-height: 58px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .theme-cyber header::-webkit-scrollbar {
+    display: none;
+  }
+
+  .theme-cyber header::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 107, 44, 0.82), transparent);
+    pointer-events: none;
+  }
+
+  .theme-cyber header button,
+  .theme-cyber header button span,
+  .theme-cyber header > div > span,
+  .theme-cyber header h2 {
+    white-space: nowrap !important;
+  }
+
+  .theme-cyber header button {
+    flex-shrink: 0 !important;
+  }
+
+  .theme-cyber header > div:first-child {
+    flex-shrink: 0 !important;
+  }
+
+  .theme-cyber header > div:first-child > span {
+    display: inline-block;
+    min-width: max-content;
+  }
+
+  .theme-cyber header .flex-1 {
+    min-width: 10px;
+  }
+
+  @media (max-width: 860px) {
+    .theme-cyber header {
+      gap: 0.5rem !important;
+      padding-left: 0.75rem !important;
+      padding-right: 0.75rem !important;
+    }
+
+    .theme-cyber header button {
+      padding-left: 0.5rem !important;
+      padding-right: 0.5rem !important;
+    }
+  }
+
+  .theme-cyber .bg-white,
+  .theme-cyber .bg-white\/80,
+  .theme-cyber .bg-white\/85,
+  .theme-cyber .bg-white\/90,
+  .theme-cyber .bg-white\/92,
+  .theme-cyber .bg-white\/95,
+  .theme-cyber .bg-slate-50,
+  .theme-cyber .bg-slate-100,
+  .theme-cyber .bg-slate-50\/40,
+  .theme-cyber .bg-slate-50\/50,
+  .theme-cyber .bg-slate-50\/60,
+  .theme-cyber .bg-slate-50\/70,
+  .theme-cyber .bg-slate-50\/80,
+  .theme-cyber .bg-slate-800,
+  .theme-cyber .bg-slate-900,
+  .theme-cyber .bg-zinc-50,
+  .theme-cyber .bg-zinc-100,
+  .theme-cyber .bg-neutral-50,
+  .theme-cyber .bg-neutral-100 {
+    background-color: var(--cyber-bg-panel) !important;
+  }
+
+  .theme-cyber .bg-sky-50,
+  .theme-cyber .bg-sky-50\/40,
+  .theme-cyber .bg-sky-50\/60,
+  .theme-cyber .bg-sky-50\/70,
+  .theme-cyber .bg-sky-50\/80,
+  .theme-cyber .bg-sky-50\/90,
+  .theme-cyber .bg-cyan-50,
+  .theme-cyber .bg-cyan-50\/40,
+  .theme-cyber .bg-cyan-50\/60,
+  .theme-cyber .bg-cyan-50\/70,
+  .theme-cyber .bg-cyan-50\/80,
+  .theme-cyber .bg-cyan-50\/90,
+  .theme-cyber .bg-blue-50,
+  .theme-cyber .bg-blue-50\/40,
+  .theme-cyber .bg-blue-50\/60,
+  .theme-cyber .bg-blue-50\/70,
+  .theme-cyber .bg-blue-50\/80,
+  .theme-cyber .bg-blue-50\/90,
+  .theme-cyber .bg-indigo-50,
+  .theme-cyber .bg-indigo-50\/40,
+  .theme-cyber .bg-indigo-50\/60,
+  .theme-cyber .bg-indigo-50\/70,
+  .theme-cyber .bg-indigo-50\/80 {
+    background-color: rgba(34, 211, 238, 0.11) !important;
+  }
+
+  .theme-cyber .bg-teal-50,
+  .theme-cyber .bg-teal-50\/80,
+  .theme-cyber .bg-emerald-50,
+  .theme-cyber .bg-emerald-50\/80 {
+    background-color: var(--cyber-green-soft) !important;
+  }
+
+  .theme-cyber .bg-amber-50,
+  .theme-cyber .bg-amber-50\/60,
+  .theme-cyber .bg-amber-50\/80,
+  .theme-cyber .bg-orange-50,
+  .theme-cyber .bg-orange-50\/80,
+  .theme-cyber .bg-brand-50 {
+    background-color: var(--cyber-orange-soft) !important;
+  }
+
+  .theme-cyber .bg-violet-50,
+  .theme-cyber .bg-violet-50\/50,
+  .theme-cyber .bg-violet-50\/70,
+  .theme-cyber .bg-violet-50\/80 {
+    background-color: rgba(168, 85, 247, 0.12) !important;
+  }
+
+  .theme-cyber .bg-rose-50,
+  .theme-cyber .bg-rose-50\/80,
+  .theme-cyber .bg-rose-50\/95 {
+    background-color: rgba(251, 113, 133, 0.12) !important;
+  }
+
+  .theme-cyber [class*="border-slate-"],
+  .theme-cyber [class*="border-brand-"],
+  .theme-cyber [class*="border-sky-"],
+  .theme-cyber [class*="border-teal-"],
+  .theme-cyber [class*="border-amber-"],
+  .theme-cyber [class*="border-violet-"],
+  .theme-cyber [class*="border-rose-"] {
+    border-color: var(--cyber-border) !important;
+  }
+
+  .theme-cyber .text-slate-800,
+  .theme-cyber .text-slate-700,
+  .theme-cyber .text-slate-600 {
+    color: var(--cyber-text) !important;
+  }
+
+  .theme-cyber .text-slate-500,
+  .theme-cyber .text-slate-400,
+  .theme-cyber .text-slate-300,
+  .theme-cyber .text-zinc-500,
+  .theme-cyber .text-zinc-400,
+  .theme-cyber .text-neutral-500,
+  .theme-cyber .text-neutral-400 {
+    color: var(--cyber-muted) !important;
+  }
+
+  .theme-cyber .text-brand-600,
+  .theme-cyber .text-brand-500,
+  .theme-cyber .hover\:text-brand-600:hover {
+    color: var(--cyber-orange) !important;
+  }
+
+  .theme-cyber .text-sky-700,
+  .theme-cyber .text-sky-600,
+  .theme-cyber .text-sky-500,
+  .theme-cyber .text-cyan-700,
+  .theme-cyber .text-cyan-600,
+  .theme-cyber .text-cyan-500,
+  .theme-cyber .text-blue-700,
+  .theme-cyber .text-blue-600,
+  .theme-cyber .text-blue-500,
+  .theme-cyber .text-indigo-700,
+  .theme-cyber .text-indigo-600,
+  .theme-cyber .text-indigo-500 {
+    color: var(--cyber-cyan) !important;
+  }
+
+  .theme-cyber .text-teal-700,
+  .theme-cyber .text-teal-600,
+  .theme-cyber .text-emerald-600 {
+    color: var(--cyber-green) !important;
+  }
+
+  .theme-cyber .text-amber-700,
+  .theme-cyber .text-amber-600,
+  .theme-cyber .text-amber-500 {
+    color: var(--cyber-amber) !important;
+  }
+
+  .theme-cyber .text-rose-600,
+  .theme-cyber .text-rose-500 {
+    color: var(--cyber-rose) !important;
+  }
+
+  /* red-* 系（Dashboard 严重数字 / 环形图关键色）：Tailwind red-600 #dc2626
+     在近黑底上对比度不足，深色下亮化一档。 */
+  .theme-cyber .text-red-700,
+  .theme-cyber .text-red-600,
+  .theme-cyber .text-red-500 {
+    color: #f87171 !important;
+  }
+
+  .theme-cyber .bg-red-100,
+  .theme-cyber .bg-red-50 {
+    background-color: rgba(248, 113, 113, 0.12) !important;
+  }
+
+  .theme-cyber .rounded-2xl,
+  .theme-cyber .rounded-xl,
+  .theme-cyber .rounded-lg,
+  .theme-cyber .rounded-md {
+    border-radius: var(--cyber-radius) !important;
+  }
+
+  .theme-cyber input,
+  .theme-cyber textarea,
+  .theme-cyber select {
+    background: var(--cyber-bg-elevated) !important;
+    border-color: var(--cyber-border) !important;
+    color: var(--cyber-text) !important;
+    font-family: inherit !important;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.015);
+  }
+
+  .theme-cyber input::placeholder,
+  .theme-cyber textarea::placeholder {
+    color: var(--cyber-dim) !important;
+  }
+
+  .theme-cyber input:focus,
+  .theme-cyber textarea:focus,
+  .theme-cyber select:focus {
+    border-color: rgba(255, 107, 44, 0.72) !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 44, 0.16), 0 0 22px rgba(255, 107, 44, 0.1) !important;
+  }
+
+  .theme-cyber button {
+    font-family: inherit !important;
+  }
+
+  .theme-cyber button[class*="border"] {
+    background: rgba(13, 16, 20, 0.84) !important;
+    border-color: var(--cyber-border) !important;
+    color: var(--cyber-muted) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+
+  .theme-cyber button[class*="border"]:hover:not(:disabled) {
+    background: rgba(255, 107, 44, 0.1) !important;
+    border-color: var(--cyber-border-strong) !important;
+    color: var(--cyber-text) !important;
+    box-shadow: 0 0 18px rgba(255, 107, 44, 0.16);
+  }
+
+  .theme-cyber button[class*="border-brand"],
+  .theme-cyber button[class*="text-brand"] {
+    color: var(--cyber-orange) !important;
+    border-color: rgba(255, 107, 44, 0.42) !important;
+  }
+
+  .theme-cyber button[class*="border-teal"],
+  .theme-cyber button[class*="text-teal"] {
+    color: var(--cyber-green) !important;
+    border-color: rgba(0, 230, 118, 0.32) !important;
+  }
+
+  .theme-cyber button[class*="border-sky"],
+  .theme-cyber button[class*="text-sky"] {
+    color: var(--cyber-cyan) !important;
+    border-color: rgba(34, 211, 238, 0.32) !important;
+  }
+
+  .theme-cyber button[class*="border-amber"],
+  .theme-cyber button[class*="text-amber"] {
+    color: var(--cyber-amber) !important;
+    border-color: rgba(251, 191, 36, 0.34) !important;
+  }
+
+  .theme-cyber button[class*="border-rose"],
+  .theme-cyber button[class*="text-rose"] {
+    color: var(--cyber-rose) !important;
+    border-color: rgba(251, 113, 133, 0.34) !important;
+  }
+
+  .theme-cyber button[class*="bg-slate-800"],
+  .theme-cyber button[class*="bg-slate-900"],
+  .theme-cyber button[class*="bg-brand-"],
+  .theme-cyber button[class*="bg-orange-"] {
+    background: linear-gradient(180deg, #ff6b2c, #c2410c) !important;
+    border-color: rgba(255, 107, 44, 0.55) !important;
+    color: #fff7ed !important;
+    box-shadow: 0 0 22px rgba(255, 107, 44, 0.22), inset 0 1px 0 rgba(255,255,255,0.12) !important;
+  }
+
+  .theme-cyber .grid > template + div,
+  .theme-cyber .grid > div,
+  .theme-cyber .group.h-full,
+  .theme-cyber [class*="hover:shadow-lg"] {
+    background:
+      linear-gradient(180deg, rgba(17, 21, 27, 0.95), rgba(8, 9, 11, 0.95)) !important;
+    border-color: var(--cyber-border) !important;
+    box-shadow: var(--cyber-shadow), inset 0 1px 0 rgba(255,255,255,0.025) !important;
+  }
+
+  .theme-cyber .group.h-full {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .theme-cyber .group.h-full::before,
+  .theme-cyber .group.h-full::after {
+    content: "";
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    pointer-events: none;
+    opacity: 0.8;
+  }
+
+  .theme-cyber .group.h-full::before {
+    top: 0;
+    left: 0;
+    border-top: 1px solid var(--cyber-border-strong);
+    border-left: 1px solid var(--cyber-border-strong);
+  }
+
+  .theme-cyber .group.h-full::after {
+    right: 0;
+    bottom: 0;
+    border-right: 1px solid rgba(34, 211, 238, 0.42);
+    border-bottom: 1px solid rgba(34, 211, 238, 0.42);
+  }
+
+  .theme-cyber .shadow-sm,
+  .theme-cyber .shadow-lg {
+    box-shadow: var(--cyber-shadow) !important;
+  }
+
+  .theme-cyber #cy {
+    background:
+      linear-gradient(rgba(34, 211, 238, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 211, 238, 0.035) 1px, transparent 1px),
+      #030405 !important;
+    background-size: 30px 30px, 30px 30px, auto !important;
+  }
+
+  .theme-cyber .overlay {
+    background: rgba(0, 0, 0, 0.68) !important;
+    backdrop-filter: blur(10px);
+  }
+
+  .theme-cyber [class*="divide-slate"] > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--cyber-border) !important;
+  }
+
+  .sidebar-btn {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 2.5rem;
+    width: 2.5rem;
+    border-radius: 0.75rem;
+    transition: background-color 0.15s, color 0.15s;
+  }
+  .sidebar-label {
+    position: absolute;
+    left: calc(100% + 0.75rem);
+    white-space: nowrap;
+    background: #1e293b;
+    color: #f8fafc;
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.375rem;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity 0.15s, transform 0.15s;
+    z-index: 50;
+  }
+  .sidebar-btn:hover .sidebar-label {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  /* ── Markdown content ──────────────────────────────── */
+  .md-body { font-size: 0.875rem; line-height: 1.65; color: inherit; }
+  .md-body p { margin: 0.35em 0; }
+  .md-body h1,.md-body h2 { font-size: 0.9em; font-weight: 700; margin: 0.8em 0 0.25em; }
+  .md-body h3 { font-size: 0.85em; font-weight: 600; margin: 0.6em 0 0.2em; }
+  .md-body pre { background: #f1f5f9; border-radius: 6px; padding: 0.6em 0.9em; overflow-x: auto; margin: 0.4em 0; font-size: 0.78em; line-height: 1.5; }
+  .md-body code { background: #f1f5f9; border-radius: 3px; padding: 0.12em 0.32em; font-size: 0.82em; font-family: ui-monospace,monospace; color: #0369a1; }
+  .md-body pre code { background: none; padding: 0; color: inherit; }
+  .md-body ul,.md-body ol { padding-left: 1.3em; margin: 0.3em 0; }
+  .md-body li { margin: 0.12em 0; }
+  .md-body ul { list-style: disc; }
+  .md-body ol { list-style: decimal; }
+  .md-body strong { font-weight: 600; }
+  .md-body em { font-style: italic; }
+  .md-body hr { border: none; border-top: 1px solid #e2e8f0; margin: 0.75em 0; }
+  /* ═══════════ 主题体系 ═══════════
+     深色 = theme-cyber(赛博朋克,body 挂 .theme-cyber 时生效)
+     浅色 = Cyber White(body 不挂 .theme-cyber 时,原生 Tailwind 露出)     */
+
+  /* ── 防闪白:Alpine 挂载前,先按 data-theme 铺底色 ───── */
+  html[data-theme="dark"] body { background:#020203 !important; }
+  html[data-theme="light"] body { background:#ffffff !important; }
+
+  /* ── 浅色 = Cyber White(theme-cyber 关闭时)────────── */
+  /* 格栅底纹:白底上淡橙+淡青网格,模仿深色版的赛博格栅 */
+  body:not(.theme-cyber) {
+    color:#0f172a;
+    background:
+      linear-gradient(rgba(255, 107, 44, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 211, 238, 0.04) 1px, transparent 1px),
+      linear-gradient(180deg, #ffffff 0%, #fafbfc 100%) !important;
+    background-size: 36px 36px, 36px 36px, auto !important;
+  }
+  /* 扫描线:极淡横向扫描,叠在最上层不挡交互 */
+  body:not(.theme-cyber)::before {
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    z-index:9999;
+    background:
+      repeating-linear-gradient(180deg, rgba(15,23,42,0.018) 0, rgba(15,23,42,0.018) 1px, transparent 1px, transparent 4px);
+    mix-blend-mode:multiply;
+    opacity:0.5;
+  }
+  /* 橙色滚动条,与深色版一致的赛博感 */
+  body:not(.theme-cyber) ::-webkit-scrollbar-thumb {
+    background: rgba(255, 107, 44, 0.42);
+    border-radius:0;
+  }
+  /* 侧边栏跟随主题:浅色时变白底,右侧橙色光晕描边 */
+  body:not(.theme-cyber) nav.sidebar-nav {
+    background:rgba(255,255,255,0.92) !important;
+    border-right-color:rgba(255,107,44,0.22) !important;
+    box-shadow: inset -1px 0 0 rgba(255,107,44,0.14), 2px 0 18px rgba(255,107,44,0.05);
+  }
+  body:not(.theme-cyber) nav.sidebar-nav .sidebar-btn { color:#64748b !important; }
+  body:not(.theme-cyber) nav.sidebar-nav .sidebar-btn:hover {
+    background:#f1f5f9 !important; color:#0f172a !important;
+  }
+  /* 浅色侧栏激活态:淡橙高亮(替代原深色药丸) */
+  body:not(.theme-cyber) nav.sidebar-nav .sidebar-btn.is-active {
+    background:#fff1e8 !important; color:#ea580c !important;
+    box-shadow: inset 0 0 0 1px rgba(255,107,44,0.35);
+  }
+  /* header 顶部橙色光条,复刻深色版赛博描边 */
+  body:not(.theme-cyber) header {
+    position:relative;
+    box-shadow: inset 0 -1px 0 rgba(255,107,44,0.18);
+  }
+  body:not(.theme-cyber) header::before {
+    content:"";
+    position:absolute;
+    top:0; left:0; right:0;
+    height:1px;
+    background: linear-gradient(90deg, transparent, rgba(255,107,44,0.6), transparent);
+    pointer-events:none;
+  }
+  /* 卡片橙色微光边框,赛博质感 */
+  body:not(.theme-cyber) .rounded-2xl.border,
+  body:not(.theme-cyber) .rounded-xl.border {
+    box-shadow: 0 0 0 1px rgba(255,107,44,0.04), 0 1px 3px rgba(15,23,42,0.04);
+  }
+
+  /* ── Markdown 代码块在深色(赛博)下换色 ───────────── */
+  .theme-cyber .md-body pre { background:#0d1014; color:#79c0ff; border:1px solid var(--cyber-border); }
+  .theme-cyber .md-body code { background:#11151b; color:#79c0ff; }
+  .theme-cyber .md-body h1,.theme-cyber .md-body h2,.theme-cyber .md-body h3 { color: var(--cyber-text); }
+  .theme-cyber .md-body hr { border-color: var(--cyber-border); }
+  /* ── 打印样式（PDF 导出） ──────────────────────────────────────────── */
+  @media print {
+    body > * { display: none !important; }
+    #sharp-print-area { display: block !important; }
+    #sharp-print-area { position: static; padding: 2cm; font-family: sans-serif; }
+    #sharp-print-area .md-body h1 { font-size: 1.6em; border-bottom: 2px solid #334155; padding-bottom: .4em; margin-bottom: 1em; }
+    #sharp-print-area .md-body h2 { font-size: 1.2em; margin-top: 1.4em; }
+    #sharp-print-area .md-body h3 { font-size: 1em; color: #475569; }
+    #sharp-print-area .md-body pre { background: #f1f5f9; padding: .75em 1em; border-radius: 4px; font-size: .8em; white-space: pre-wrap; }
+    #sharp-print-area .md-body code { background: #f1f5f9; padding: .1em .3em; border-radius: 3px; font-size: .85em; }
+    #sharp-print-area .md-body table { width: 100%; border-collapse: collapse; }
+    #sharp-print-area .md-body th, #sharp-print-area .md-body td { border: 1px solid #e2e8f0; padding: .4em .6em; text-align: left; }
+    #sharp-print-area .md-body th { background: #f8fafc; font-weight: 600; }
+    #sharp-print-area .print-meta { color: #64748b; font-size: .8em; margin-bottom: 1.5em; border-bottom: 1px solid #e2e8f0; padding-bottom: .5em; }
+    @page { margin: 2cm; }
+  }
+</style>
+<script>
+  tailwind.config = {
+    theme: {
+      fontFamily: { sans: ['-apple-system','BlinkMacSystemFont','Inter','Segoe UI','sans-serif'] },
+      extend: {
+        colors: {
+          brand: { 50:'#fff7ed',100:'#ffedd5',200:'#fed7aa',300:'#fdba74',400:'#fb923c',500:'#ff6b2c',600:'#ea580c',700:'#c2410c',800:'#9a3412',900:'#7c2d12' }
+        }
+      }
+    }
+  }
+</script>
+<script>
+(function(){
+  var s=localStorage.getItem('sharp_theme');
+  var sys=window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.setAttribute('data-theme',(s==='dark'||(s!=='light'&&sys))?'dark':'light');
+})();
+</script>
+</head>
+<body class="bg-slate-50 text-slate-800 h-screen flex flex-col overflow-hidden" :class="{ 'theme-cyber': darkActive, 'select-none cursor-col-resize': isResizingPanel, 'pl-14': authView === 'app' }" x-data="sharpApp()">
+
+<!-- 打印专用区域（屏幕隐藏，print 显示）-->
+<div id="sharp-print-area" style="display:none"></div>
+
+<!-- ═══════════ AUTH GATE ═══════════ -->
+<!-- Loading -->
+<div x-show="authView === 'loading'" x-cloak class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900">
+  <div class="text-slate-400 text-sm animate-pulse">正在验证身份...</div>
+</div>
+
+<!-- Setup (first run) -->
+<div x-show="authView === 'setup'" x-cloak class="fixed inset-0 z-[100] flex">
+  <div class="hidden lg:flex flex-col items-center justify-center w-1/3 bg-brand-600 p-12 text-center">
+    <div class="relative flex items-center justify-center mb-6">
+      <div class="absolute size-72 rounded-full border border-white/10"></div>
+      <div class="absolute size-52 rounded-full border border-white/15"></div>
+      <div class="absolute size-36 rounded-full border border-white/20"></div>
+      <svg class="relative z-10 w-16 h-16 text-white" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    </div>
+    <h1 class="text-2xl font-bold text-white">Sharp</h1>
+    <p class="mt-2 text-sm text-white/70">AI 自动化渗透测试引擎</p>
+  </div>
+  <div class="flex flex-1 items-center justify-center bg-white p-8">
+    <div class="w-full max-w-sm">
+      <h2 class="text-xl font-bold text-slate-800 mb-1">初始化系统</h2>
+      <p class="text-sm text-slate-500 mb-6">首次运行，请设置管理员密码</p>
+      <form @submit.prevent="authSetup()" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
+          <input type="password" x-model="authPassword" placeholder="至少10位，含大小写+数字+特殊字符" autocomplete="new-password"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">确认密码</label>
+          <input type="password" x-model="authPasswordConfirm" placeholder="再次输入密码" autocomplete="new-password"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+        </div>
+        <p x-show="authError" class="text-sm" :class="authError.includes('成功') ? 'text-emerald-600' : 'text-rose-500'" x-text="authError"></p>
+        <div class="rounded-xl border border-amber-200 bg-amber-50 p-3">
+          <p class="text-xs leading-relaxed text-amber-800">
+            ⚠️ Sharp 是自动化渗透测试工具，会对你指定的目标发起真实的安全测试请求。
+            <b>仅可用于你已获得明确书面授权的系统</b>。未经授权的测试、利用或数据访问可能违反法律，一切后果由使用者自行承担。
+          </p>
+          <label class="mt-2 flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" x-model="authAgree" class="mt-0.5 h-4 w-4 rounded border-amber-300 text-brand-500 focus:ring-brand-400">
+            <span class="text-xs font-medium text-amber-900">我已阅读并同意，仅在获得明确授权的环境中使用本工具，并对使用行为负全部法律责任。</span>
+          </label>
+        </div>
+        <button type="submit" :disabled="authLoading || !authAgree"
+          class="w-full py-2 text-sm font-medium bg-brand-500 text-white rounded-xl hover:bg-brand-600 transition disabled:opacity-40 disabled:cursor-not-allowed">
+          <span x-text="authLoading ? '设置中...' : '设置密码'"></span>
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Login -->
+<div x-show="authView === 'login'" x-cloak class="fixed inset-0 z-[100] flex">
+  <div class="hidden lg:flex flex-col items-center justify-center w-1/3 bg-brand-600 p-12 text-center">
+    <div class="relative flex items-center justify-center mb-6">
+      <div class="absolute size-72 rounded-full border border-white/10"></div>
+      <div class="absolute size-52 rounded-full border border-white/15"></div>
+      <div class="absolute size-36 rounded-full border border-white/20"></div>
+      <svg class="relative z-10 w-16 h-16 text-white" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    </div>
+    <h1 class="text-2xl font-bold text-white">Sharp</h1>
+    <p class="mt-2 text-sm text-white/70">AI 自动化渗透测试引擎</p>
+  </div>
+  <div class="flex flex-1 items-center justify-center bg-white p-8">
+    <div class="w-full max-w-sm">
+      <h2 class="text-xl font-bold text-slate-800 mb-1">登录</h2>
+      <p class="text-sm text-slate-500 mb-6">请输入管理员密码</p>
+      <form @submit.prevent="authLogin()" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-1">密码</label>
+          <input type="password" x-model="authPassword" placeholder="请输入密码" autocomplete="current-password"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+        </div>
+        <p x-show="authError" class="text-sm text-rose-500" x-text="authError"></p>
+        <button type="submit" :disabled="authLoading"
+          class="w-full py-2 text-sm font-medium bg-brand-500 text-white rounded-xl hover:bg-brand-600 transition disabled:opacity-40">
+          <span x-text="authLoading ? '登录中...' : '登录'"></span>
+        </button>
+      </form>
+      <p class="mt-6 text-center text-xs text-slate-400">
+        使用本工具即表示同意
+        <button type="button" @click="disclaimerOpen = true" class="text-brand-500 hover:text-brand-600 underline underline-offset-2">免责声明与授权使用条款</button>
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- Disclaimer modal (shared by login / init) -->
+<!-- 免责声明弹窗（登录页 / 初始化页共用）。
+     授权确认不允许被绕过：不响应 ESC、点击遮罩不关闭，只能点「我已知悉并同意」。
+     确认按会话记忆（sessionStorage），新会话重新确认。 -->
+<div x-show="disclaimerOpen" x-cloak role="dialog" aria-modal="true" aria-labelledby="disclaimer-title"
+  class="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4">
+  <div class="w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+    <h3 class="text-lg font-bold text-slate-800 mb-3">免责声明与授权使用条款</h3>
+    <div class="space-y-3 text-sm leading-relaxed text-slate-600">
+      <p>Sharp 是一款面向 Web / 小程序 / App 的自动化渗透测试引擎，会对使用者指定的目标发起<b>真实的安全测试请求</b>，供合法授权的安全测试、教育培训、学术研究和个人学习使用。使用本工具即表示您理解并同意以下内容：</p>
+      <p><b>1. 合法授权原则</b><br>对任何目标进行测试或分析前，必须已获得目标系统所有者的明确书面授权。未经授权的测试、利用或数据访问所产生的一切法律责任由使用者自行承担。</p>
+      <p><b>2. 禁止非法用途</b><br>禁止将本工具用于任何未经授权的网络攻击、数据窃取、破坏计算机信息系统等违法行为。使用者应自行确保其行为符合所在国家或地区的法律法规。</p>
+      <p><b>3. 风险自负</b><br>本工具按"现状"提供，不提供任何明示或暗示的担保。作者及贡献者不对因使用或无法使用本工具导致的任何直接、间接、附带或后续损失承担责任。</p>
+      <p><b>4. AI 生成内容</b><br>本工具依赖 AI 自动生成命令、脚本与结论，输出结果仅供参考，使用者应自行审核其正确性、安全性与合法性。</p>
+      <p><b>5. 开源协议</b><br>本项目遵循仓库所附 LICENSE 文件发布，使用、修改、分发时请遵守对应开源许可证。</p>
+      <p class="text-slate-400">如果您不同意上述任何内容，请立即停止使用本工具。</p>
+    </div>
+    <div class="mt-5 flex items-center justify-between gap-3">
+      <p class="text-[11px] text-slate-400">必须确认后才能使用；关闭页面视为不同意。</p>
+      <button type="button" @click="disclaimerOpen = false; sessionStorage.setItem('sharp.disclaimer_agreed', '1')"
+        class="px-4 py-2 text-sm font-medium bg-brand-500 text-white rounded-xl hover:bg-brand-600 transition shrink-0">我已知悉并同意</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ SIDEBAR NAV ═══════════ -->
+<nav x-show="authView === 'app'" x-cloak
+  class="sidebar-nav fixed left-0 top-0 bottom-0 z-30 w-14 flex flex-col items-center bg-slate-900 border-r border-slate-800 py-3 gap-1">
+
+  <!-- Logo -->
+  <div class="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600">
+    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+  </div>
+
+  <!-- 仪表盘 -->
+  <button @click="goDashboard()"
+    :class="view === 'dashboard' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+    title="仪表盘"
+    class="sidebar-btn group relative flex h-10 w-10 flex-col items-center justify-center rounded-xl transition">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+      <rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/>
+    </svg>
+    <span class="sidebar-label">仪表盘</span>
+  </button>
+
+  <!-- 新建项目 -->
+  <button @click="goNewProject()"
+    :class="view === 'newproject' ? 'bg-brand-500/20 text-brand-400' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+    class="sidebar-btn group"
+    title="新建项目">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+      <path d="M12 5v14M5 12h14"/>
+    </svg>
+    <span class="sidebar-label">新建</span>
+  </button>
+
+  <!-- 项目列表 -->
+  <button @click="goProjectList()"
+    :class="view === 'list' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+    title="项目列表"
+    class="sidebar-btn group relative flex h-10 w-10 flex-col items-center justify-center rounded-xl transition">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+      <path d="M3 7h18M3 12h18M3 17h18"/>
+    </svg>
+    <span class="sidebar-label">项目</span>
+  </button>
+
+  <!-- 审批中心 -->
+  <button @click="goApprovals()"
+    :class="view === 'approvals' ? 'bg-rose-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+    title="审批中心"
+    class="sidebar-btn group relative flex h-10 w-10 flex-col items-center justify-center rounded-xl transition">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+      <path d="M9 12.75 11.25 15 15 9.75"/><path d="M12 21s-7-4.35-9-8.585C1.5 8.5 4.1 5.25 7.5 5.25c1.8 0 3.45.95 4.5 2.4 1.05-1.45 2.7-2.4 4.5-2.4 3.4 0 6 3.25 4.5 7.165C19 16.65 12 21 12 21Z"/>
+    </svg>
+    <span class="sidebar-label">审批</span>
+    <span x-show="pendingApprovalCount() > 0"
+      class="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center tabular-nums"
+      x-text="pendingApprovalCount() > 99 ? '99+' : pendingApprovalCount()"></span>
+  </button>
+
+  <!-- 漏洞库 -->
+  <button @click="goVulns()"
+    :class="view === 'vulns' ? 'bg-rose-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+    title="漏洞库"
+    class="sidebar-btn group relative flex h-10 w-10 flex-col items-center justify-center rounded-xl transition">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><path d="M12 16h.01"/>
+    </svg>
+    <span class="sidebar-label">漏洞</span>
+    <span x-show="totalVulns() > 0"
+      class="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center tabular-nums"
+      x-text="totalVulns() > 99 ? '99+' : totalVulns()"></span>
+  </button>
+
+  <!-- 分隔线 -->
+  <div class="w-6 h-px bg-slate-700/50 my-1"></div>
+
+  <!-- 应用分析（小程序 + 安卓 App 合并入口） -->
+  <button @click="goAppAnalysis()"
+    :class="view === 'app-analysis' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+    class="sidebar-btn group"
+    title="应用分析">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+      <rect x="2" y="4" width="11" height="16" rx="2"/><path d="M13 9h9v8h-9"/>
+    </svg>
+    <span class="sidebar-label">应用分析</span>
+  </button>
+
+  <!-- Sharp 助手 -->
+  <button @click="goChat()"
+    :class="view === 'chat' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+    class="sidebar-btn group"
+    title="Sharp 助手">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+    </svg>
+    <span class="sidebar-label">Sharp 助手</span>
+  </button>
+
+  <!-- 全局搜索 -->
+  <button @click="openGlobalSearch()"
+    title="全局证据搜索"
+    class="sidebar-btn group text-slate-400 hover:bg-slate-800 hover:text-white relative flex h-10 w-10 flex-col items-center justify-center rounded-xl transition">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+      <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+    </svg>
+    <span class="sidebar-label">搜索</span>
+  </button>
+
+  <div class="mt-auto flex flex-col items-center gap-1">
+    <!-- 报告中心 -->
+    <button @click="goReports()"
+      :class="view === 'reports' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+      title="报告中心"
+      class="sidebar-btn group relative flex h-10 w-10 flex-col items-center justify-center rounded-xl transition">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
+      </svg>
+      <span class="sidebar-label">报告</span>
+    </button>
+    <div class="w-6 h-px bg-slate-700/50 my-0.5"></div>
+    <!-- 外观切换（单键循环） -->
+    <button @click="applyTheme(themeMode==='light'?'system':themeMode==='system'?'dark':'light')"
+      :title="themeMode==='light'?'浅色（点击切换跟随系统）':themeMode==='system'?'跟随系统（点击切换深色）':'深色（点击切换浅色）'"
+      class="sidebar-btn group text-slate-500 hover:bg-slate-800 hover:text-white">
+      <template x-if="themeMode==='light'">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2m-3.5-7.5-1.5 1.5m-9 9L5 18.5m13 0-1.5-1.5m-9-9L5 5.5"/>
+        </svg>
+      </template>
+      <template x-if="themeMode==='system'">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/>
+        </svg>
+      </template>
+      <template x-if="themeMode==='dark'">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </template>
+      <span class="sidebar-label" x-text="themeMode==='light'?'浅色':themeMode==='system'?'跟随系统':'深色'"></span>
+    </button>
+    <!-- 调度器 -->
+    <button @click="goDispatcher()"
+      :class="view === 'dispatcher' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+      class="sidebar-btn group"
+      title="调度器状态">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+        <path d="M4 6h16M4 12h16M4 18h16"/>
+        <circle cx="8" cy="6" r="1.2" fill="currentColor" stroke="none"/>
+        <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+        <circle cx="16" cy="18" r="1.2" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="sidebar-label">调度器</span>
+    </button>
+
+    <!-- 设置 -->
+    <button @click="goSettings()"
+      :class="view === 'settings' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-white'"
+      class="sidebar-btn group"
+      title="设置">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7 7 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"/>
+        <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+      </svg>
+      <span class="sidebar-label">设置</span>
+    </button>
+
+    <!-- 退出 -->
+    <button @click="authLogout()"
+      class="sidebar-btn group text-slate-500 hover:bg-rose-900/40 hover:text-rose-400"
+      title="退出登录">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75"/>
+      </svg>
+      <span class="sidebar-label">退出</span>
+    </button>
+  </div>
+</nav>
+
+<!-- ═══════════ DASHBOARD VIEW ═══════════ -->
+<!-- @include views/dashboard.html -->
+
+<!-- ═══════════ VULNERABILITY VIEW ═══════════ -->
+<!-- @include views/vulns.html -->
+
+<!-- ═══════════ VULN DETAIL MODAL ═══════════ -->
+<div x-show="showVulnDetail" x-cloak x-transition.opacity
+  class="fixed inset-0 z-50 flex items-center justify-center p-4"
+  style="background:rgba(0,0,0,0.3);backdrop-filter:blur(4px)"
+  @click.self="showVulnDetail = false"
+  @keydown.escape.window="showVulnDetail = false">
+  <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] flex flex-col overflow-hidden" @click.stop>
+    <template x-if="vulnDetail">
+      <div class="flex flex-col min-h-0">
+        <!-- header -->
+        <div class="px-5 py-4 border-b border-slate-100 flex items-start gap-3 shrink-0">
+          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0"
+            :class="vulnSeverityClass(vulnDetail.severity)" x-text="vulnSeverityLabel(vulnDetail.severity)"></span>
+          <div class="flex-1 min-w-0">
+            <h3 class="text-base font-semibold text-slate-800" x-text="vulnDetail.title"></h3>
+            <div class="mt-1 flex items-center gap-2 text-xs text-slate-400">
+              <span :class="vulnStatusClass(vulnDetail.status)"
+                class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border"
+                x-text="vulnStatusLabel(vulnDetail.status)"></span>
+              <span x-text="vulnDetail.id"></span>
+              <span x-show="vulnDetail.url">·</span>
+              <a x-show="vulnDetail.url" :href="vulnDetail.url" target="_blank" class="text-brand-500 hover:underline truncate max-w-xs" x-text="vulnDetail.url"></a>
+            </div>
+          </div>
+          <button @click="showVulnDetail = false" class="text-slate-300 hover:text-slate-500 shrink-0">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6l12 12M6 18L18 6"/></svg>
+          </button>
+        </div>
+        <!-- body -->
+        <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm">
+          <div x-show="vulnDetail.description">
+            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">描述</h4>
+            <p class="text-slate-600 whitespace-pre-wrap" x-text="vulnDetail.description"></p>
+          </div>
+          <!-- P0-1 可交付性：缺什么、建议怎么补（对 vuln/finding 生效，旗帜不参与） -->
+          <div x-show="vulnDetail.quality && vulnDetail.quality.applicable && !vulnDetail.quality.complete"
+            class="rounded-xl border border-rose-200 bg-rose-50/60 p-3 space-y-1">
+            <div class="text-xs font-semibold text-rose-700">⚠️ 证据不足，不可直接对外提交</div>
+            <div class="text-xs text-rose-600" x-text="'缺少：' + ((vulnDetail.quality?.missing_labels || []).join('、') || '（未填）')"></div>
+            <template x-for="note in (vulnDetail.quality?.notes || [])" :key="note">
+              <div class="text-[11px] text-rose-500" x-text="'· ' + note"></div>
+            </template>
+          </div>
+          <div x-show="vulnDetail.evidence">
+            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">证据</h4>
+            <pre class="text-xs bg-slate-50 rounded-lg p-3 overflow-x-auto text-slate-600 whitespace-pre-wrap" x-text="vulnDetail.evidence"></pre>
+          </div>
+          <div x-show="vulnDetail.reproduction">
+            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">复现步骤</h4>
+            <pre class="text-xs bg-slate-50 rounded-lg p-3 overflow-x-auto text-slate-600 whitespace-pre-wrap" x-text="vulnDetail.reproduction"></pre>
+          </div>
+          <div x-show="vulnDetail.impact">
+            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">影响</h4>
+            <p class="text-slate-600 whitespace-pre-wrap" x-text="vulnDetail.impact"></p>
+          </div>
+          <div x-show="vulnDetail.recommendation">
+            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">修复建议</h4>
+            <p class="text-slate-600 whitespace-pre-wrap" x-text="vulnDetail.recommendation"></p>
+          </div>
+          <div class="flex items-center gap-4 text-xs text-slate-400 pt-2 border-t border-slate-100">
+            <span x-show="vulnDetail.intent_id">来源行动: <span class="font-mono text-slate-500" x-text="vulnDetail.intent_id"></span></span>
+            <span x-show="vulnDetail.fact_id">关联证据: <span class="font-mono text-slate-500" x-text="vulnDetail.fact_id"></span></span>
+            <span x-show="vulnDetail.verified_at">确认时间: <span x-text="formatDate(vulnDetail.verified_at)"></span></span>
+          </div>
+        </div>
+        <!-- actions -->
+        <div class="px-5 py-3 border-t border-slate-100 flex items-center gap-2 shrink-0">
+          <button x-show="vulnDetail.status !== 'confirmed'"
+            @click="updateVulnStatus(vulnDetail.project_id, vulnDetail.id, 'confirmed')"
+            class="px-3 py-1.5 rounded-lg bg-emerald-500 text-white text-xs font-medium hover:bg-emerald-600 transition">确认漏洞</button>
+          <button x-show="vulnDetail.status !== 'dismissed'"
+            @click="updateVulnStatus(vulnDetail.project_id, vulnDetail.id, 'dismissed')"
+            class="px-3 py-1.5 rounded-lg bg-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-300 transition">忽略</button>
+          <button x-show="vulnDetail.status !== 'pending'"
+            @click="updateVulnStatus(vulnDetail.project_id, vulnDetail.id, 'pending')"
+            class="px-3 py-1.5 rounded-lg bg-amber-100 text-amber-700 text-xs font-medium hover:bg-amber-200 transition">设为待审</button>
+          <div class="flex-1"></div>
+          <button @click="confirmDialog({
+              title: '删除漏洞记录',
+              message: '确定删除此漏洞记录？删除后不可恢复。',
+              okText: '删除',
+              danger: true,
+              onOk: () => deleteVuln(vulnDetail.project_id, vulnDetail.id)
+            })"
+            class="px-3 py-1.5 rounded-lg text-rose-500 text-xs font-medium hover:bg-rose-50 transition">删除</button>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- ═══════════ PROJECT LIST VIEW ═══════════ -->
+<!-- @include views/list.html -->
+
+<!-- ═══════════ GRAPH VIEW ═══════════ -->
+<!-- @include views/graph.html -->
+
+<!-- ═══════════ REPORTS VIEW ═══════════ -->
+<!-- @include views/reports.html -->
+
+<!-- ═══════════ APPROVALS VIEW (审批中心) ═══════════ -->
+<!-- @include views/approvals.html -->
+
+<!-- 审批详情弹窗 -->
+<div x-show="showApprovalDetail" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" @click.self="closeApprovalDetail()">
+  <div class="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-slate-100 bg-slate-50/60 flex items-center gap-2">
+      <span class="font-semibold text-slate-700 truncate" x-text="approvalDetail?.project_title || '审批详情'"></span>
+      <span class="font-mono text-[11px] text-slate-400" x-text="approvalDetail?.intent?.id"></span>
+      <div class="flex-1"></div>
+      <button @click="closeApprovalDetail()" class="text-slate-400 hover:text-slate-600 transition">✕</button>
+    </div>
+    <div class="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+      <template x-if="approvalDetail?.intent">
+        <div class="space-y-4">
+          <!-- 风险/审批状态 -->
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border"
+              :class="riskLevelClass(approvalDetail.intent.risk_level)">
+              <span class="h-1.5 w-1.5 rounded-full" :class="riskLevelDotClass(approvalDetail.intent.risk_level)"></span>
+              <span x-text="riskLevelLabel(approvalDetail.intent.risk_level)"></span>
+            </span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border"
+              :class="approvalStatusClass(approvalDetail.intent.approval_status)">
+              <span x-text="approvalStatusLabel(approvalDetail.intent.approval_status)"></span>
+            </span>
+            <template x-if="approvalDetail.intent.risk_reason">
+              <span class="text-[11px] text-slate-400 italic" x-text="'风险原因：' + approvalDetail.intent.risk_reason"></span>
+            </template>
+          </div>
+
+          <!-- 描述 -->
+          <div>
+            <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">操作描述</div>
+            <div class="md-body text-sm text-slate-700" x-html="renderMd(approvalDetail.intent.description)"></div>
+          </div>
+
+          <!-- 元信息 -->
+          <div class="grid grid-cols-2 gap-3 text-xs">
+            <div class="flex items-start justify-between gap-2"><span class="text-slate-400 shrink-0">来源证据</span><span class="font-mono text-slate-600 text-right break-all" x-text="(approvalDetail.intent.from || []).join(', ')"></span></div>
+            <div class="flex items-start justify-between gap-2"><span class="text-slate-400 shrink-0">创建者</span><span class="text-slate-600 text-right break-all" x-text="approvalDetail.intent.creator"></span></div>
+            <div class="flex items-start justify-between gap-2"><span class="text-slate-400 shrink-0">创建时间</span><span class="text-slate-600 text-right" x-text="formatDate(approvalDetail.intent.created_at)"></span></div>
+            <div class="flex items-start justify-between gap-2"><span class="text-slate-400 shrink-0">项目状态</span><span class="text-slate-600 text-right" x-text="approvalDetail.project_status"></span></div>
+          </div>
+
+          <!-- 备注（批准/拒绝时填写） -->
+          <template x-if="approvalDetail.intent.approval_status === 'pending'">
+            <div>
+              <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">备注（拒绝时必填）</div>
+              <textarea x-model="approvalActionNote" rows="2" placeholder="填写批准说明，或拒绝理由..."
+                class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-300"></textarea>
+            </div>
+          </template>
+
+          <!-- 审批历史 -->
+          <div>
+            <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">审批历史</div>
+            <div class="space-y-1.5">
+              <template x-if="!approvalDetail.events || approvalDetail.events.length === 0">
+                <p class="text-xs text-slate-400">暂无记录</p>
+              </template>
+              <template x-for="e in (approvalDetail.events || [])" :key="e.id">
+                <div class="flex items-start gap-2 text-xs">
+                  <span class="font-mono text-slate-400 shrink-0" x-text="formatTime(e.created_at)"></span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0"
+                    :class="e.action === 'approved' ? 'bg-teal-50 text-teal-600' : e.action === 'rejected' ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-500'"
+                    x-text="e.action"></span>
+                  <span class="text-slate-500 break-all" x-text="e.note || ''"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+    <div class="px-5 py-3 border-t border-slate-100 flex items-center justify-end gap-2 bg-slate-50/50">
+      <template x-if="approvalDetail?.intent?.approval_status === 'pending'">
+        <button @click="approveIntent(approvalDetail.intent.id, approvalDetail.project_id, approvalActionNote)"
+          :disabled="approvalActing === approvalDetail.project_id + '/' + approvalDetail.intent.id"
+          class="px-4 py-2 rounded-lg bg-teal-600 text-white text-sm hover:bg-teal-700 transition disabled:opacity-40">
+          <span x-text="approvalActing === approvalDetail.project_id + '/' + approvalDetail.intent.id ? '处理中...' : '批准'"></span>
+        </button>
+        <button @click="rejectIntent(approvalDetail.intent.id, approvalDetail.project_id, approvalActionNote)"
+          :disabled="approvalActing === approvalDetail.project_id + '/' + approvalDetail.intent.id"
+          class="px-4 py-2 rounded-lg bg-rose-600 text-white text-sm hover:bg-rose-700 transition disabled:opacity-40">
+          <span x-text="approvalActing === approvalDetail.project_id + '/' + approvalDetail.intent.id ? '处理中...' : '拒绝'"></span>
+        </button>
+      </template>
+      <button @click="closeApprovalDetail()" class="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-500 hover:bg-slate-50 transition">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 紧急模式弹窗 -->
+<div x-show="showEmergencyModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm" @click.self="closeEmergencyModal()">
+  <div class="w-full max-w-md rounded-2xl border border-amber-200 bg-white shadow-2xl overflow-hidden">
+    <div class="px-5 py-4 border-b border-amber-100 bg-amber-50/80 flex items-center gap-2">
+      <span class="font-semibold text-amber-800">开启紧急模式</span>
+      <div class="flex-1"></div>
+      <button @click="closeEmergencyModal()" class="text-amber-400 hover:text-amber-600 transition">✕</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <p class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+        紧急模式下，该项目的 高危/严重 操作将自动放行（不再等待人工审批），操作全程留痕。请务必填写原因。
+      </p>
+      <div>
+        <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">选择项目</div>
+        <select x-model="emergencyForm.projectId" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-100 focus:border-amber-300">
+          <option value="">请选择项目...</option>
+          <template x-for="p in projects" :key="p.id">
+            <option :value="p.id" x-text="p.title || p.id"></option>
+          </template>
+        </select>
+      </div>
+      <div>
+        <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">原因（必填）</div>
+        <textarea x-model="emergencyForm.reason" rows="2" placeholder="例如：客户已确认目标授权，需立即完成验证"
+          class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-100 focus:border-amber-300"></textarea>
+      </div>
+      <div>
+        <div class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">持续时长（小时）</div>
+        <input x-model="emergencyForm.hours" type="number" min="1" step="1" value="2"
+          class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-amber-100 focus:border-amber-300">
+      </div>
+    </div>
+    <div class="px-5 py-3 border-t border-amber-100 flex items-center justify-end gap-2 bg-amber-50/40">
+      <button @click="closeEmergencyModal()" class="px-4 py-2 rounded-lg border border-slate-200 text-sm text-slate-500 hover:bg-slate-50 transition">取消</button>
+      <button @click="setEmergencyMode()" :disabled="approvalActing === 'emergency'"
+        class="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm hover:bg-amber-700 transition disabled:opacity-40">
+        <span x-text="approvalActing === 'emergency' ? '处理中...' : '开启'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ ANDROID CHAT VIEW ═══════════ -->
+<!-- ═══════════ 应用分析（小程序 + 安卓 App 合并页面） ═══════════ -->
+<!-- @include views/app-analysis.html -->
+
+<!-- ═══════════ AI CHAT VIEW (Codex 风格左右布局) ═══════════ -->
+<!-- @include views/chat.html -->
+
+<!-- ═══════════ NEW PROJECT VIEW ═══════════ -->
+<!-- @include views/newproject.html -->
+
+<!-- ═══════════ MODALS ═══════════ -->
+
+<!-- 通用确认对话框（替代原生 confirm） -->
+<div x-show="uiConfirm.show" x-cloak class="fixed inset-0 z-[60] flex items-center justify-center overlay" @click.self="closeConfirmDialog()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop role="alertdialog" aria-modal="true">
+    <div class="flex items-start gap-3">
+      <div class="shrink-0 w-9 h-9 rounded-full flex items-center justify-center"
+        :class="uiConfirm.danger ? 'bg-rose-50 text-rose-500' : 'bg-amber-50 text-amber-500'">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+        </svg>
+      </div>
+      <div class="min-w-0">
+        <h3 class="text-base font-semibold text-slate-700" x-text="uiConfirm.title"></h3>
+        <p class="mt-1.5 text-sm text-slate-500 whitespace-pre-line" x-text="uiConfirm.message"></p>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-6">
+      <button @click="closeConfirmDialog()" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+      <button @click="confirmDialogOk()"
+        class="px-4 py-2 text-sm text-white rounded-xl font-medium transition"
+        :class="uiConfirm.danger ? 'bg-rose-600 hover:bg-rose-700' : 'bg-brand-500 hover:bg-brand-600'">
+        <span x-text="uiConfirm.okText"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 通用输入对话框（替代原生 prompt） -->
+<div x-show="uiPrompt.show" x-cloak class="fixed inset-0 z-[60] flex items-center justify-center overlay" @click.self="closePromptDialog()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop role="dialog" aria-modal="true">
+    <h3 class="text-base font-semibold text-slate-700 mb-4" x-text="uiPrompt.title"></h3>
+    <input id="uiPromptInput" x-model="uiPrompt.value"
+      @keydown.enter.prevent="promptDialogOk()"
+      :placeholder="uiPrompt.placeholder"
+      class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+    <div class="flex justify-end gap-2 mt-5">
+      <button @click="closePromptDialog()" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+      <button @click="promptDialogOk()" class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition">确定</button>
+    </div>
+  </div>
+</div>
+
+
+
+<!-- Custom Template Modal (add / edit) -->
+<div x-show="npPage.showAddForm || npPage.editingIdx !== -1" x-cloak
+  class="fixed inset-0 z-50 flex items-center justify-center overlay"
+  @click.self="npPage.showAddForm = false; npPage.editingIdx = -1">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between">
+      <h3 class="text-base font-semibold text-slate-700"
+        x-text="npPage.editingIdx !== -1 ? '编辑自定义模板' : '新增自定义模板'"></h3>
+      <button @click="npPage.showAddForm = false; npPage.editingIdx = -1"
+        class="text-slate-400 hover:text-slate-600 transition px-2 py-1 rounded-lg hover:bg-slate-50">关闭</button>
+    </div>
+    <div class="p-5 space-y-4">
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1.5">模板名称</label>
+        <input x-model="npPage.editForm.name" placeholder="例如：某类型渗透测试" autocomplete="off"
+          class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1">
+          Origin <span class="font-normal text-slate-400 text-xs">— 起点内容</span>
+        </label>
+        <textarea x-model="npPage.editForm.origin" rows="4"
+          placeholder="目标地址：https://&#10;账号信息：&#10;授权范围："
+          class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 resize-none"></textarea>
+      </div>
+      <div>
+        <label class="block text-sm font-semibold text-slate-700 mb-1">
+          Goal <span class="font-normal text-slate-400 text-xs">— 目标内容</span>
+        </label>
+        <textarea x-model="npPage.editForm.goal" rows="4"
+          placeholder="验证是否存在..."
+          class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 resize-none"></textarea>
+      </div>
+      <div class="flex justify-end gap-2 pt-1">
+        <button @click="npPage.showAddForm = false; npPage.editingIdx = -1"
+          class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+        <button
+          @click="npPage.editingIdx !== -1 ? updateCustomTemplate(npPage.editingIdx) : saveCustomTemplate()"
+          :disabled="!npPage.editForm.name.trim()"
+          class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40">
+          保存模板
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Report Preview Modal -->
+<div x-show="reportPreview.show" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="reportPreview.show = false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl mx-4 border border-slate-200/60 overflow-hidden flex flex-col max-h-[85vh]" @click.stop>
+    <div class="px-5 py-3.5 border-b border-slate-200/80 flex items-center justify-between gap-4 shrink-0">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <svg class="w-4 h-4 text-brand-500 shrink-0" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+          <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2z"/>
+        </svg>
+        <span class="text-sm font-semibold text-slate-700 truncate" x-text="reportPreview.title || 'AI 报告预览'"></span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button @click="printReport()" x-show="!reportPreview.loading && reportPreview.content"
+          class="px-3 py-1.5 text-sm text-brand-600 hover:bg-brand-50 rounded-xl transition flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6v-8z"/></svg>
+          导出 PDF
+        </button>
+        <button @click="reportPreview.show = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-y-auto p-6">
+      <template x-if="reportPreview.loading">
+        <div class="flex items-center justify-center py-20 text-slate-400">
+          <svg class="w-6 h-6 animate-spin mr-2" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+          加载中...
+        </div>
+      </template>
+      <template x-if="!reportPreview.loading && reportPreview.content">
+        <div class="md-body text-slate-700 prose-sm max-w-none" x-html="renderMd(reportPreview.content)"></div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<!-- 全局线索搜索模态框 -->
+<div x-show="globalSearch.show" x-cloak class="fixed inset-0 z-50 flex items-start justify-center pt-20 overlay" @click.self="closeGlobalSearch()" @keydown.escape.window="closeGlobalSearch()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 border border-slate-200/60 overflow-hidden flex flex-col max-h-[70vh]" @click.stop>
+    <div class="px-4 py-3 border-b border-slate-100 flex items-center gap-3">
+      <svg class="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input x-model="globalSearch.query" @input.debounce.400ms="runGlobalSearch()"
+        placeholder="搜索所有项目中的证据…" autofocus
+        class="flex-1 text-sm text-slate-700 outline-none placeholder:text-slate-300">
+      <button @click="closeGlobalSearch()" class="text-slate-400 hover:text-slate-600 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="flex-1 overflow-y-auto">
+      <template x-if="globalSearch.loading">
+        <div class="flex items-center justify-center py-12 text-slate-400 gap-2">
+          <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/></svg>
+          搜索中…
+        </div>
+      </template>
+      <template x-if="!globalSearch.loading && globalSearch.done && globalSearch.results.length === 0">
+        <div class="py-12 text-center text-slate-400 text-sm">没有找到匹配的证据</div>
+      </template>
+      <template x-for="r in globalSearch.results" :key="`${r.projectId}-${r.factId}`">
+        <button type="button" @click="jumpToSearchResult(r)"
+          class="w-full text-left px-4 py-3 border-b border-slate-50 hover:bg-brand-50/40 transition flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-md"
+                :class="projectStatusBadgeClass(r.projectStatus)" x-text="r.projectTitle"></span>
+              <span class="text-[10px] font-mono text-slate-400" x-text="r.factId"></span>
+            </div>
+            <p class="text-xs text-slate-600 leading-relaxed line-clamp-2 break-words" x-text="r.snippet"></p>
+          </div>
+          <svg class="w-3.5 h-3.5 text-slate-300 shrink-0 mt-1" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+      </template>
+      <template x-if="globalSearch.results.length >= 50">
+        <div class="py-3 text-center text-[11px] text-slate-400">已显示前 50 条结果，请细化搜索词</div>
+      </template>
+      <template x-if="!globalSearch.query.trim() && !globalSearch.done">
+        <div class="py-12 text-center text-slate-300 text-sm">输入关键词开始搜索</div>
+      </template>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════ 统一项目操作面板 ═══════════ -->
+<div x-show="projectAction.show" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="projectAction = { show: false, mode: '' }">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 border border-slate-200/60" @click.stop>
+
+    <!-- ═══ 新建探索行动 ═══ -->
+    <template x-if="projectAction.mode === 'intent'">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700 mb-1">新建探索行动</h3>
+        <div class="mb-4">
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">来源证据</label>
+          <div class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 min-h-[42px] flex flex-wrap gap-1.5 items-center">
+            <template x-for="fid in selectedFacts" :key="`intent-from-${fid}`">
+              <span class="px-2 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-mono text-slate-600" x-text="fid"></span>
+            </template>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <textarea x-model="intentForm.description" placeholder="准备探索什么方向？例如：对 8080 端口 Swagger 接口做未授权验证" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+          <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
+            操作者：<span class="font-medium text-slate-700" x-text="actorName()"></span>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button @click="projectAction = { show: false, mode: '' }" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+          <button @click="createIntent(false)" :disabled="!intentForm.description"
+            class="px-5 py-2 text-sm border border-slate-200 text-slate-600 rounded-xl font-medium hover:bg-slate-50 transition disabled:opacity-30">只声明</button>
+          <button @click="createIntent(true)" :disabled="!intentForm.description"
+            class="px-5 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition disabled:opacity-30 shadow-sm shadow-brand-200">声明并认领</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ═══ 写入探索结论 ═══ -->
+    <template x-if="projectAction.mode === 'conclude'">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700 mb-1">写入探索结论</h3>
+        <p class="text-xs text-slate-400 mb-4 font-mono" x-text="concludeForm.intentId"></p>
+        <div class="space-y-3">
+          <textarea x-model="concludeForm.description" placeholder="发现了什么？这里会作为新的证据写入证据图" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+          <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
+            操作者：<span class="font-medium text-slate-700" x-text="actorName()"></span>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button @click="projectAction = { show: false, mode: '' }" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+          <button @click="concludeIntent()" :disabled="!concludeForm.description"
+            class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">写入结论</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ═══ 完成项目 ═══ -->
+    <template x-if="projectAction.mode === 'complete'">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700 mb-1">完成项目</h3>
+        <p class="text-xs text-slate-400 mb-3">确认选中的证据已经满足 Goal</p>
+        <!-- 完成前验收盘点（批次 11.2）：服务端实时盘点，仅提示不阻断 -->
+        <div class="mb-4">
+          <template x-if="acceptanceLoading">
+            <div class="px-3 py-2 rounded-xl bg-slate-50 text-[11px] text-slate-400">正在盘点未完成事项…</div>
+          </template>
+          <template x-if="!acceptanceLoading && acceptance && acceptance.has_open_work">
+            <div class="px-3 py-2.5 rounded-xl bg-amber-50 border border-amber-200 space-y-1">
+              <p class="text-[11px] font-semibold text-amber-800">完成前请确认以下未决事项：</p>
+              <template x-if="acceptance.open_intents.length">
+                <p class="text-[11px] text-amber-700">• <span x-text="acceptance.open_intents.length"></span> 个开放探索行动未结论</p>
+              </template>
+              <template x-if="acceptance.pending_approvals.length">
+                <p class="text-[11px] text-amber-700">• <span x-text="acceptance.pending_approvals.length"></span> 个高危行动等待人工审批</p>
+              </template>
+              <template x-if="acceptance.untrusted_facts.length">
+                <p class="text-[11px] text-amber-700">• <span x-text="acceptance.untrusted_facts.length"></span> 个证据被标注不可信（图中 ⚠ 节点）</p>
+              </template>
+              <template x-if="acceptance.open_sub_goals && acceptance.open_sub_goals.length">
+                <p class="text-[11px] text-amber-700">• <span x-text="acceptance.open_sub_goals.length"></span> 个阶段目标尚未完成（见右栏「阶段」）</p>
+              </template>
+              <template x-if="acceptance.unconfirmed_high_vulns.length">
+                <p class="text-[11px] text-amber-700">• <span x-text="acceptance.unconfirmed_high_vulns.length"></span> 个高危/严重漏洞尚未确认</p>
+              </template>
+              <p class="text-[10px] text-amber-600/80 pt-0.5">仍可完成——此清单仅供参考，由你决定。</p>
+            </div>
+          </template>
+          <template x-if="!acceptanceLoading && acceptance && !acceptance.has_open_work">
+            <div class="px-3 py-2 rounded-xl bg-teal-50 border border-teal-100 text-[11px] text-teal-700">
+              ✓ 无遗留开放行动 / 待审批 / 不可信证据 / 未确认高危
+            </div>
+          </template>
+        </div>
+        <!-- 覆盖摘要（P1-A）：与上面的"未决事项"互补 ——
+             清单答"还有什么没了结"，这里答"覆盖到哪、哪里根本没碰过" -->
+        <div class="mb-4">
+          <template x-if="coverageLoading && !coverage">
+            <div class="px-3 py-2 rounded-xl bg-slate-50 text-[11px] text-slate-400">正在汇总覆盖情况…</div>
+          </template>
+          <template x-if="!coverageLoading && coverage">
+            <div class="px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+              <p class="text-[11px] font-semibold text-slate-600">覆盖摘要</p>
+              <p class="text-[11px] text-slate-500">
+                结论 <span class="font-medium text-slate-700" x-text="coverage.findings.total"></span> 条
+                <template x-if="coverage.findings.incomplete_count">
+                  <span class="text-amber-700">（其中 <span x-text="coverage.findings.incomplete_count"></span> 条证据不足）</span>
+                </template>
+                · 接口台账 <span class="font-medium text-slate-700" x-text="coverage.assets.total"></span>
+                （未验证 <span x-text="coverage.assets.todo"></span>）
+                · 已验证不通 <span class="font-medium text-slate-700" x-text="coverage.dead_ends.length"></span> 条
+              </p>
+              <p class="text-[11px] text-amber-700" x-show="coverage.blind_spot_count > 0">
+                ⚠ 盲区 <span class="font-semibold" x-text="coverage.blind_spot_count"></span> 项（未验证接口 / 放弃的行动 / 未结算假设 / 未完成阶段）
+              </p>
+              <button type="button" @click="openCoverageReport()" class="text-[11px] text-brand-600 hover:underline">查看完整覆盖报告 →</button>
+            </div>
+          </template>
+        </div>
+        <div class="space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">依据证据</label>
+            <div class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 min-h-[42px] flex flex-wrap gap-1.5 items-center">
+              <template x-for="fid in selectedFacts" :key="`complete-from-${fid}`">
+                <span class="px-2 py-1 rounded-lg bg-white border border-slate-200 text-[11px] font-mono text-slate-600" x-text="fid"></span>
+              </template>
+            </div>
+          </div>
+          <textarea x-model="completeForm.description" placeholder="为什么已经达成目标？例如：已验证关键风险、完成复测清单或形成可交付结论" rows="2" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+          <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
+            操作者：<span class="font-medium text-slate-700" x-text="actorName()"></span>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button @click="projectAction = { show: false, mode: '' }" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+          <button @click="completeProject()" :disabled="selectedFacts.length === 0 || !completeForm.description"
+            class="px-5 py-2 text-sm bg-teal-500 text-white rounded-xl font-medium hover:bg-teal-600 transition disabled:opacity-30 shadow-sm shadow-teal-200">标记完成</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ═══ 添加人工线索 ═══ -->
+    <template x-if="projectAction.mode === 'coverage'">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700 mb-1">覆盖报告</h3>
+        <p class="text-xs text-slate-400 mb-3">
+          打到了什么 / 已验证不通 / 盲区 —— 盲区只列**有据可查**的缺口，未列出的面不等于已覆盖
+        </p>
+        <template x-if="coverageLoading">
+          <div class="px-3 py-6 rounded-xl bg-slate-50 text-[11px] text-slate-400 text-center">正在生成…</div>
+        </template>
+        <template x-if="!coverageLoading && !coverage">
+          <div class="px-3 py-6 rounded-xl bg-slate-50 text-[11px] text-slate-400 text-center">暂无覆盖报告</div>
+        </template>
+        <template x-if="!coverageLoading && coverage">
+          <div>
+            <pre class="max-h-[52vh] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[11px] leading-relaxed text-slate-700 font-mono" x-text="coverage.markdown"></pre>
+            <div class="flex items-center justify-end gap-2 mt-4">
+              <button type="button" @click="copyCoverageMarkdown()"
+                class="px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition">复制 Markdown</button>
+              <button type="button" @click="closeCoverageReport()"
+                class="px-3 py-1.5 rounded-lg bg-brand-500 text-white text-xs font-medium hover:bg-brand-600 transition">关闭</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <template x-if="projectAction.mode === 'hint'">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700 mb-4">添加人工线索</h3>
+        <div class="space-y-3">
+          <textarea x-model="hintForm.content" placeholder="策略建议或补充线索，例如：优先看后台接口权限、不要做破坏性操作" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+          <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
+            操作者：<span class="font-medium text-slate-700" x-text="actorName()"></span>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button @click="projectAction = { show: false, mode: '' }" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+          <button @click="addHint()" :disabled="!hintForm.content"
+            class="px-5 py-2 text-sm bg-amber-500 text-white rounded-xl font-medium hover:bg-amber-600 transition disabled:opacity-30 shadow-sm shadow-amber-200">添加</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ═══ 重新打开项目 ═══ -->
+    <template x-if="projectAction.mode === 'reopen'">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700 mb-1">重新打开项目</h3>
+        <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(reopenForm.projectId, reopenForm.projectTitle)"></p>
+        <div class="space-y-3">
+          <textarea x-model="reopenForm.description" placeholder="为什么之前的完成判断不成立？这会写入一条外部反馈证据" rows="3" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300"></textarea>
+          <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-sm text-slate-500">
+            操作者：<span class="font-medium text-slate-700" x-text="actorName()"></span>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button @click="projectAction = { show: false, mode: '' }" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+          <button @click="reopenProject()" :disabled="!reopenForm.projectId || !reopenForm.description"
+            class="px-5 py-2 text-sm bg-sky-500 text-white rounded-xl font-medium hover:bg-sky-600 transition disabled:opacity-30 shadow-sm shadow-sky-200">重新打开</button>
+        </div>
+      </div>
+    </template>
+
+    <!-- ═══ 重命名项目 ═══ -->
+    <template x-if="projectAction.mode === 'rename'">
+      <div>
+        <h3 class="text-base font-semibold text-slate-700 mb-1">重命名项目</h3>
+        <p class="text-xs text-slate-400 mb-4" x-text="projectLabel(renameForm.projectId, renameForm.originalTitle)"></p>
+        <div class="space-y-3">
+          <input x-ref="renameTitleInput" x-model="renameForm.title" @keydown.enter.prevent="renameProject()" placeholder="项目名称" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          <p class="text-[11px] text-slate-400">这里只修改项目标题，不影响证据图与任务状态。</p>
+        </div>
+        <div class="flex justify-end gap-2 mt-5">
+          <button @click="projectAction = { show: false, mode: '' }" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+          <button @click="renameProject()" :disabled="!renameForm.projectId || !renameForm.title"
+            class="px-5 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition disabled:opacity-30 shadow-sm">保存</button>
+        </div>
+      </div>
+    </template>
+
+  </div>
+</div>
+
+<!-- Local Preferences -->
+<div x-show="showLocalPrefs" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showLocalPrefs = false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
+    <h3 class="text-base font-semibold text-slate-700 mb-4">本地偏好</h3>
+    <div class="space-y-4">
+      <div>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">操作者</label>
+        <input x-model="localPrefs.actor_name" placeholder="你的名字" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+      </div>
+      <div>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">默认图布局</label>
+        <select x-model="localPrefs.layout_mode" class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <option value="dagre_tb">纵向 ↓</option>
+          <option value="dagre_lr">横向 →</option>
+          <option value="klay_tb">分层 ↓</option>
+          <option value="klay_lr">分层 →</option>
+          <option value="elk_tb">自动 ↓</option>
+          <option value="elk_lr">自动 →</option>
+        </select>
+      </div>
+      <p class="text-[11px] text-slate-400">仅保存在当前浏览器，不会写入服务端。</p>
+    </div>
+    <div class="flex justify-end gap-2 mt-5">
+      <button @click="showLocalPrefs = false" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      <button @click="saveLocalSettings()" class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition shadow-sm">保存本地设置</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings -->
+<!-- @include views/settings.html -->
+
+<!-- Dispatcher Status -->
+<!-- @include views/dispatcher.html -->
+
+<!-- Export Preview -->
+<div x-show="showYamlModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="showYamlModal = false">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-4xl mx-4 border border-slate-200/60 overflow-hidden" @click.stop>
+    <div class="px-5 py-4 border-b border-slate-200/80 flex items-center justify-between gap-4">
+      <div class="min-w-0 flex items-center gap-3">
+        <div class="flex rounded-lg border border-slate-200 overflow-hidden shrink-0">
+          <button @click="switchExportTab('yaml')" class="px-2.5 py-1 text-xs font-medium transition"
+            :class="exportTab === 'yaml' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">YAML</button>
+          <button @click="switchExportTab('timeline')" class="px-2.5 py-1 text-xs font-medium transition"
+            :class="exportTab === 'timeline' ? 'bg-slate-100 text-slate-700' : 'text-slate-400 hover:text-slate-600'">时间线</button>
+        </div>
+        <p class="text-xs text-slate-400 truncate" x-text="yamlPreviewTitle"></p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button @click="copyYamlPreview()" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">复制</button>
+        <button @click="handleAiReportById(exportProjectId, yamlPreviewTitle)" class="px-3 py-1.5 text-sm text-cyan-600 hover:bg-cyan-50 rounded-xl transition">报告</button>
+        <button @click="showYamlModal = false" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">关闭</button>
+      </div>
+    </div>
+    <div class="max-h-[75vh] overflow-auto bg-slate-50 p-4">
+      <div class="rounded-xl border border-slate-200 bg-white overflow-auto shadow-sm">
+        <div class="min-w-max p-0 text-[12px] leading-6 font-mono select-text" x-html="yamlPreviewHtml"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 目标空间详情（P2-A）：一个资产键下跨项目的整体状态 -->
+<div x-show="assetSpaceOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeAssetSpace()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[86vh] overflow-hidden border border-slate-200/60 flex flex-col" @click.stop>
+    <div class="px-6 py-4 border-b border-slate-100 flex items-center gap-3">
+      <div class="min-w-0">
+        <h3 class="text-base font-semibold text-slate-700">目标空间</h3>
+        <p class="text-xs text-slate-400 mt-0.5">
+          同一资产键下**跨项目**的整体状态：共享接口台账 / 历史发现 / 已沉淀知识
+        </p>
+      </div>
+      <div class="flex-1"></div>
+      <button @click="closeAssetSpace()" class="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition" title="关闭">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="px-6 py-4 overflow-y-auto">
+      <template x-if="assetSpaceLoading">
+        <div class="py-10 text-center text-sm text-slate-400">加载中…</div>
+      </template>
+
+      <template x-if="!assetSpaceLoading && assetSpace">
+        <div class="space-y-4">
+          <!-- 概览 -->
+          <div class="rounded-2xl border border-slate-200/70 bg-slate-50/60 px-4 py-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-mono text-sm font-semibold text-slate-700" x-text="assetSpace.asset_ref"></span>
+              <template x-for="k in assetSpace.target_kinds" :key="'k-' + k">
+                <span class="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide"
+                  :class="assetKindBadge(k).cls" x-text="assetKindBadge(k).label"></span>
+              </template>
+              <template x-if="assetSpace.projects[0] && assetSpace.projects[0].product">
+                <span class="px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-[11px] text-slate-500"
+                  x-text="'产品：' + assetSpace.projects[0].product"></span>
+              </template>
+            </div>
+            <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500">
+              <span>项目 <b class="text-slate-700" x-text="assetSpace.project_count"></b></span>
+              <span>证据 <b class="text-slate-700" x-text="assetSpace.activity.fact_total"></b></span>
+              <span>行动 <b class="text-slate-700" x-text="assetSpace.activity.intent_total"></b></span>
+              <span>结论 <b class="text-slate-700" x-text="assetSpace.findings.total"></b></span>
+              <span class="text-slate-400" x-text="'首轮 ' + formatTime(assetSpace.activity.first_project_at)"></span>
+            </div>
+          </div>
+
+          <!-- 覆盖状态：接口台账 -->
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest">接口台账（跨项目共享）</p>
+              <span class="text-[11px] text-slate-400 tabular-nums"
+                x-text="assetSpace.endpoints.total + ' 个 · 待验证 ' + assetSpace.endpoints.discovered + ' · 已验证 ' + assetSpace.endpoints.verified + ' · 已排除 ' + assetSpace.endpoints.dismissed"></span>
+            </div>
+            <template x-if="assetSpace.endpoints.total === 0">
+              <p class="text-xs text-slate-400 px-1">还没有登记接口 —— 结论文本里出现完整 URL 时会自动登记。</p>
+            </template>
+            <div class="space-y-1.5">
+              <template x-for="group in [['todo', '待验证'], ['verified', '已验证'], ['dismissed', '已排除']]" :key="group[0]">
+                <template x-if="assetSpaceEndpointGroups()[group[0]].length">
+                  <div>
+                    <p class="text-[11px] text-slate-500 mb-1" x-text="group[1] + '（' + assetSpaceEndpointGroups()[group[0]].length + '）'"></p>
+                    <div class="flex flex-wrap gap-1.5">
+                      <template x-for="ep in assetSpaceEndpointGroups()[group[0]]" :key="ep.method + ep.path">
+                        <span class="px-2 py-1 rounded-lg border text-[11px] font-mono inline-flex items-center gap-1.5"
+                          :class="group[0] === 'todo' ? 'border-amber-200 bg-amber-50/60 text-amber-700' : 'border-slate-200 bg-white text-slate-500'"
+                          :title="(ep.note || '') + (ep.source_project_title ? '（来自 ' + ep.source_project_title + '）' : '')">
+                          <span class="text-[9px] font-bold opacity-70" x-text="ep.method"></span>
+                          <span x-text="ep.path"></span>
+                        </span>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </template>
+            </div>
+          </div>
+
+          <!-- 历史发现 -->
+          <div>
+            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">历史发现（跨项目）</p>
+            <template x-if="assetSpace.findings.total === 0">
+              <p class="text-xs text-slate-400 px-1">这个资产下还没有登记的结论。</p>
+            </template>
+            <template x-if="assetSpace.findings.total > 0">
+              <div class="space-y-2">
+                <div class="flex flex-wrap gap-1.5">
+                  <template x-for="row in assetSpaceSeverityRows()" :key="row.severity">
+                    <span class="px-2 py-0.5 rounded-lg border text-[11px]"
+                      :class="row.severity === 'critical' || row.severity === 'high' ? 'border-rose-200 bg-rose-50 text-rose-600' : 'border-slate-200 bg-white text-slate-500'"
+                      x-text="row.severity + ' ' + row.count"></span>
+                  </template>
+                  <template x-if="assetSpace.findings.high_unconfirmed > 0">
+                    <span class="px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-700"
+                      x-text="assetSpace.findings.high_unconfirmed + ' 条高危待确认'"></span>
+                  </template>
+                </div>
+                <template x-if="assetSpace.findings.incomplete_evidence > 0">
+                  <div class="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
+                    <p class="text-[11px] text-amber-800 font-medium" x-text="assetSpace.findings.incomplete_evidence + ' 条结论证据不足（交付前需补齐）'"></p>
+                    <template x-for="item in assetSpace.findings.incomplete_items.slice(0, 5)" :key="'inc-' + item.id">
+                      <p class="text-[11px] text-amber-700 mt-0.5 truncate"
+                        x-text="'· ' + item.title + '（缺 ' + item.missing + '，来自 ' + (item.project_id) + '）'"></p>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <!-- 已沉淀知识 -->
+          <div>
+            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">已沉淀知识（目标键维度）</p>
+            <div class="flex flex-wrap gap-1.5 mb-2">
+              <template x-for="(count, kind) in assetSpace.knowledge.by_kind" :key="'kb-' + kind">
+                <span class="px-2 py-0.5 rounded-lg border border-slate-200 bg-white text-[11px] text-slate-500"
+                  x-text="kind + ' ' + count"></span>
+              </template>
+              <template x-if="!Object.keys(assetSpace.knowledge.by_kind).length">
+                <span class="text-xs text-slate-400">尚无沉淀知识</span>
+              </template>
+            </div>
+            <template x-if="assetSpace.knowledge.dead_ends.length">
+              <div class="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+                <p class="text-[11px] font-medium text-slate-600 mb-1"
+                  x-text="'已验证不通（' + assetSpace.knowledge.dead_ends.length + '）—— 换同类目标时最省时间的一条'"></p>
+                <template x-for="d in assetSpace.knowledge.dead_ends.slice(0, 6)" :key="'de-' + d.title">
+                  <p class="text-[11px] text-slate-500 mt-0.5 truncate" x-text="'· ' + d.title"></p>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <!-- 战线 -->
+          <div>
+            <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">该资产下的项目</p>
+            <div class="space-y-1">
+              <template x-for="p in assetSpace.projects" :key="'sp-' + p.id">
+                <button @click="closeAssetSpace(); openProject(p.id)"
+                  class="w-full text-left px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition flex items-center gap-2">
+                  <span class="text-[10px] font-mono text-slate-400 shrink-0" x-text="p.id"></span>
+                  <span class="text-xs text-slate-600 truncate" x-text="p.title"></span>
+                  <div class="flex-1"></div>
+                  <span class="text-[10px] shrink-0 px-1.5 py-0.5 rounded"
+                    :class="p.status === 'completed' ? 'bg-teal-50 text-teal-600' : p.status === 'active' ? 'bg-brand-50 text-brand-600' : 'bg-slate-100 text-slate-500'"
+                    x-text="p.status"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Project -->
+<div x-show="showDeleteModal" x-cloak class="fixed inset-0 z-50 flex items-center justify-center overlay" @click.self="closeDeleteModal()">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 border border-slate-200/60" @click.stop>
+    <div class="flex items-start gap-3">
+      <div class="w-10 h-10 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center shrink-0">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4.75A1.75 1.75 0 0 1 9.75 3h4.5A1.75 1.75 0 0 1 16 4.75V6"/><path d="M19 6l-.63 11.338A2 2 0 0 1 16.37 19.5H7.63a2 2 0 0 1-1.997-2.162L5 6"/><path d="M10 10.5v5"/><path d="M14 10.5v5"/></svg>
+      </div>
+      <div class="min-w-0 flex-1">
+        <h3 class="text-base font-semibold text-slate-700">删除项目</h3>
+        <p class="text-sm text-slate-500 mt-1 leading-relaxed">
+          将永久删除
+          <span class="font-medium text-slate-700 break-all" x-text="deleteConfirmLabel()"></span>.
+        </p>
+        <p class="text-xs text-slate-400 mt-3">这个操作不能撤销。</p>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-6">
+      <button @click="closeDeleteModal()" :disabled="isDeletingProject" class="px-4 py-2 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition disabled:opacity-40 disabled:cursor-not-allowed">取消</button>
+      <button @click="confirmDeleteProject()" :disabled="isDeletingProject" class="px-4 py-2 text-sm bg-rose-500 text-white rounded-xl font-medium hover:bg-rose-600 transition shadow-sm shadow-rose-200 disabled:opacity-40 disabled:cursor-not-allowed">
+        <span x-text="isDeletingProject ? '删除中...' : '删除'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div x-show="toast.show" x-cloak
+  x-transition:enter="transition ease-out duration-300"
+  x-transition:enter-start="opacity-0 translate-y-2"
+  x-transition:enter-end="opacity-100 translate-y-0"
+  x-transition:leave="transition ease-in duration-200"
+  x-transition:leave-start="opacity-100"
+  x-transition:leave-end="opacity-0 translate-y-2"
+  class="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium"
+  :class="toast.type === 'error' ? 'bg-red-500 text-white' : 'bg-slate-800 text-white'">
+  <span x-text="toast.message"></span>
+</div>
+
+<script src="/static/app.core.js?v=71"></script>
+<script src="/static/app.projects.js?v=71"></script>
+<script src="/static/app.approvals.js?v=71"></script>
+<script src="/static/app.graph.js?v=71"></script>
+<script src="/static/app.board.js?v=71"></script>
+<script src="/static/app.timeline.js?v=71"></script>
+<script src="/static/app.replay.js?v=71"></script>
+<script src="/static/app.project-detail.js?v=71"></script>
+<script src="/static/app.intents.js?v=71"></script>
+<script src="/static/app.analyzers.js?v=71"></script>
+<script src="/static/app.chat.js?v=71"></script>
+<script src="/static/app.js?v=71"></script>
+</body>
+</html>

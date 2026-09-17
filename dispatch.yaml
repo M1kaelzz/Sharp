@@ -1,0 +1,122 @@
+# Sharp server API endpoint.
+server: "http://localhost:8000"
+
+# Shared environment variables merged into every worker.
+common_env:
+  # Android dynamic testing (frida / panda-dex-dumper):
+  # The worker container cannot see USB devices. This variable tells adb inside
+  # the container to connect to the HOST's adb server over TCP instead.
+  # Requires: run `adb server` on the host (macOS/Windows: starts automatically
+  # when you run any adb command with the phone USB-connected).
+  # Remove or comment this line if you only do static analysis and don't need a
+  # device — an empty value breaks adb, so it must be absent, not empty.
+  ADB_SERVER_SOCKET: "tcp:host.docker.internal:5037"
+  # Wireless alternative (no config needed here): inside the container run:
+  #   adb connect <phone-ip>:<port>   (phone: enable Wireless Debugging in DevOps)
+
+runtime:
+  # Scheduler tick interval in seconds.
+  interval: 3
+  # Global concurrency cap across all workers and all projects.
+  max_workers: 8
+  # Maximum number of projects that may be actively scheduled at the same time.
+  max_running_projects: 3
+  # Per-project worker cap. Prevents one project from monopolizing the whole dispatcher.
+  max_project_workers: 4
+  # Healthcheck timeout for each worker process before a task is assigned.
+  # Bumped to 60s: third-party API gateways/proxies can take 7-20s to answer even a minimal ping,
+  # and a too-tight timeout falsely marks the worker unhealthy, causing the
+  # dispatch->healthcheck-timeout->cooldown->retry loop.
+  healthcheck_timeout: 60
+  # Prompt set loaded from runtime/src/sharp/dispatcher/prompts/.
+  prompt_group: "default"
+
+tasks:
+  bootstrap:
+    # Main execution timeout for the initial direct solve attempt.
+    # Raised 300->400: initial recon (asset discovery + credential-path mapping)
+    # needs more time; too short a budget caused premature conclude.
+    timeout: 400
+    # Time budget for conclude fallback after the main phase times out or returns unusable output.
+    # Raised 90->180: the fallback must re-read a large graph plus the whole session and
+    # emit a full JSON conclusion. In a real run (4 explores in parallel) two fallbacks
+    # were killed at exactly 90s (exit 124, empty stdout) -- and a killed conclude
+    # discards the entire round, since the conclusion is the only channel that carries
+    # it back into the graph. Better to pay a longer budget than to lose a 5-7 min round.
+    conclude_timeout: 180
+  reason:
+    # Reason decides whether the goal is met and whether new intents should be proposed.
+    timeout: 300
+    # Hard cap on how many new intents one reason step may create.
+    # Increased from 2 to 4: logic-vuln testing needs more parallel exploration directions
+    # (IDOR, vertical escalation, flow bypass, credential acquisition can all run concurrently).
+    max_intents: 4
+  explore:
+    # Main execution timeout for exploring a claimed intent.
+    timeout: 300
+    # Time budget for conclude fallback used to summarize confirmed findings from the same session.
+    # Raised 90->180 for the same reason as bootstrap above (observed exit-124 kills at 90s).
+    conclude_timeout: 180
+
+container:
+  # Base worker container. The dispatcher execs agent commands inside one container per project.
+  image: "sharp-worker:latest"
+  # "bridge" is the cross-platform default and reaches internet targets on
+  # Linux/macOS/Windows. Switch to "host" ONLY on native Linux when you need to
+  # scan localhost or the host's own network (on macOS/Windows Docker Desktop
+  # "host" binds the Linux VM, not your machine, so it does not do what you want).
+  network_mode: "bridge"
+  # "stop" keeps finished containers for inspection; "remove" is cleaner but loses post-run state.
+  completed_action: "stop"
+  # Add Linux capabilities only when a task truly needs them, such as packet crafting or network admin actions.
+  # cap_add:
+  #   - "NET_RAW"
+  #   - "NET_ADMIN"
+  # Resource caps (optional). Prevent runaway scanning tools from exhausting host resources.
+  # memory: "4g"      # Docker mem_limit string; e.g. "512m", "2g", "4g"
+  # cpu_count: 2      # Fractional CPUs to allocate per container; e.g. 1, 1.5, 2
+
+
+workers:
+  # Anthropic / Claude Code worker
+  - name: "claude_worker"
+    type: "claudecode"
+    task_types: [bootstrap, reason, explore]
+    max_running: 3
+    priority: 0
+    env:
+      # Model and endpoint should be explicit. Defaults here point at the OFFICIAL Anthropic
+      # endpoint with a version-agnostic model alias. If you use a third-party gateway, override
+      # with SHARP_BASE_URL / SHARP_MODEL — do not bake someone else's gateway into the default
+      # (traffic through an unaffiliated proxy is a supply-chain risk, and it breaks for everyone
+      # who does not have an account there).
+      ANTHROPIC_MODEL: "${SHARP_MODEL:-sonnet}"
+      ANTHROPIC_BASE_URL: "${SHARP_BASE_URL:-https://api.anthropic.com}"
+      ANTHROPIC_AUTH_TOKEN: "${SHARP_ANTHROPIC_AUTH_TOKEN:-}"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      CLAUDE_CODE_ATTRIBUTION_HEADER: "0"
+
+  # OpenAI / Codex worker
+  - name: "openai_worker"
+    type: "codex"
+    task_types: [bootstrap, reason, explore]
+    max_running: 2
+    priority: 1
+    env:
+      CODEX_MODEL: "${OPENAI_MODEL:-gpt-4}"
+      CODEX_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+
+  # Inflection / Pi worker (disabled - requires 'pi' CLI tool in container)
+  # - name: "pi_worker"
+  #   type: "pi"
+  #   task_types: [bootstrap, reason, explore]
+  #   max_running: 2
+  #   priority: 2
+  #   env:
+  #     PI_MODEL: "${PI_MODEL:-inflection-3}"
+  #     PI_BASE_URL: "${PI_BASE_URL:-https://api.inflection.ai}"
+  #     PI_API_KEY: "${PI_API_KEY:-}"
+  #     PI_PROVIDER_API: "inflection"
+
+mcp_servers: []

@@ -1,0 +1,594 @@
+<div x-show="view === 'app-analysis'" x-cloak class="flex-1 flex flex-col overflow-hidden">
+  <!-- Tab 切换条 -->
+  <div class="px-5 py-2.5 border-b border-slate-200 bg-white flex items-center justify-between gap-4 shrink-0">
+    <div class="flex items-center gap-1.5">
+      <button @click="appAnalysisTab = 'miniprogram'"
+        :class="appAnalysisTab === 'miniprogram' ? 'border-cyan-400 bg-cyan-50 text-cyan-700' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'"
+        class="px-4 py-1.5 rounded-lg border text-sm font-medium transition inline-flex items-center gap-1.5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        小程序包
+      </button>
+      <button @click="appAnalysisTab = 'android'"
+        :class="appAnalysisTab === 'android' ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-transparent text-slate-400 hover:text-slate-600 hover:bg-slate-50'"
+        class="px-4 py-1.5 rounded-lg border text-sm font-medium transition inline-flex items-center gap-1.5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg>
+        安卓 App
+      </button>
+      <!-- 成熟度标注（P1）：把"这块不如核心链路可信"直接写在界面上 -->
+      <span class="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+        title="实验性功能：小程序与 APK 分析依赖外部工具链（node/反编译/frida）与设备环境，自动化测试覆盖低于核心挖掘链路（项目 / 证据图 / 行动 / 审批 / 产物）。结果请人工复核。">
+        ⚗ 实验性
+      </span>
+    </div>
+    <button @click="appAnalysisTab === 'miniprogram' ? resetMiniProgramAnalysis() : resetAndroidAnalysis()"
+      class="text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition px-3 py-1.5">清空</button>
+  </div>
+
+  <!-- ── 小程序 Tab ── -->
+  <div x-show="appAnalysisTab === 'miniprogram'" class="flex-1 overflow-auto bg-slate-50 p-4">
+    <div class="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4">
+      <!-- 左栏：上传 + 扫描 + 解包 + HAR -->
+      <section class="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <input x-ref="miniProgramFileInput" type="file" accept=".wxapkg,.zip,application/zip,application/octet-stream" class="hidden" @change="selectMiniProgramFile($event)">
+        <button type="button" @click="$refs.miniProgramFileInput.click()"
+          class="w-full rounded-lg border border-dashed border-cyan-200 bg-cyan-50/50 px-4 py-8 text-center transition hover:bg-cyan-50">
+          <svg class="mx-auto h-8 w-8 text-cyan-500" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></svg>
+          <span class="mt-3 block text-sm font-medium text-slate-700" x-text="miniProgram.filename || '选择 wxapkg / zip 文件'"></span>
+          <span class="mt-1 block text-xs text-slate-400" x-text="miniProgram.file ? formatBytes(miniProgram.file.size) : '最大 80MB，当前版本不落盘保存包内容'"></span>
+        </button>
+        <button @click="analyzeMiniProgram()" :disabled="!miniProgram.file || miniProgram.loading"
+          class="mt-4 w-full px-4 py-2 text-sm bg-cyan-500 text-white rounded-lg font-medium hover:bg-cyan-600 transition shadow-sm shadow-cyan-200 disabled:opacity-30 disabled:cursor-not-allowed">
+          <span x-text="miniProgram.loading ? '分析中...' : '开始分析'"></span>
+        </button>
+        <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-relaxed text-slate-500">
+          扫描微信缓存时会自动使用 AppID 解密 V1MMWX 包；手动上传仍建议上传已解密包或源码 zip。
+        </div>
+
+        <div class="mt-4 border-t border-slate-100 pt-4">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h4 class="text-sm font-semibold text-slate-700">微信缓存包</h4>
+              <p class="mt-0.5 text-[11px] text-slate-400" x-text="miniProgram.scanSummary || '按修改时间倒序列出本机可读 wxapkg'"></p>
+            </div>
+            <button @click="scanMiniProgramPackages()" :disabled="miniProgram.scanning"
+              class="shrink-0 rounded-lg border border-cyan-200 px-3 py-1.5 text-xs font-medium text-cyan-600 hover:bg-cyan-50 transition disabled:opacity-40">
+              <span x-text="miniProgram.scanning ? '扫描中...' : '扫描'"></span>
+            </button>
+          </div>
+          <div class="mt-3 max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white">
+            <template x-if="!miniProgram.scanning && miniProgram.packages.length === 0">
+              <div class="px-3 py-6 text-center text-xs text-slate-400">暂无扫描结果</div>
+            </template>
+            <template x-for="pkg in miniProgramFilteredPackages()" :key="pkg.path">
+              <button type="button" @click="selectScannedMiniProgramPackage(pkg)"
+                class="w-full border-b border-slate-100 px-3 py-2.5 text-left last:border-b-0 transition hover:bg-cyan-50/60"
+                :class="miniProgram.selectedPath === pkg.path ? 'bg-cyan-50 ring-1 ring-inset ring-cyan-200' : ''">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="min-w-0 truncate font-mono text-xs text-slate-700" x-text="pkg.name"></span>
+                  <span class="shrink-0 text-[10px] text-slate-400" x-text="formatBytes(pkg.size)"></span>
+                </div>
+                <div class="mt-1 flex flex-wrap gap-x-2 gap-y-1 text-[10px] text-slate-400">
+                  <span x-text="formatDate(pkg.mtime)"></span>
+                  <span x-show="pkg.app_id" class="font-mono text-cyan-600" x-text="pkg.app_id"></span>
+                  <span x-show="pkg.package_count" x-text="`${pkg.package_count} 个包`"></span>
+                </div>
+                <div class="mt-1 truncate font-mono text-[10px] text-slate-400" x-text="pkg.path"></div>
+              </button>
+            </template>
+          </div>
+          <button @click="analyzeSelectedMiniProgramPackage()" :disabled="!miniProgram.selectedPath || miniProgram.loading"
+            class="mt-3 w-full rounded-lg border border-brand-200 px-4 py-2 text-sm font-medium text-brand-600 hover:bg-brand-50 transition disabled:opacity-30 disabled:cursor-not-allowed">
+            <span x-text="miniProgram.loading && miniProgram.source === 'scan' ? '分析中...' : '分析选中缓存包'"></span>
+          </button>
+          <div class="mt-3">
+            <label class="mb-1 block text-[11px] font-medium text-slate-400">解包输出目录</label>
+            <input x-model.trim="miniProgram.unpackOutputDir" placeholder="默认输出到桌面 sharp-wxapkg-output"
+              class="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 font-mono text-xs text-slate-600 outline-none transition placeholder:text-slate-300 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100">
+          </div>
+          <button @click="unpackSelectedMiniProgramPackage()" :disabled="!miniProgram.selectedPath || miniProgram.unpacking"
+            class="mt-2 w-full rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 transition disabled:opacity-30 disabled:cursor-not-allowed">
+            <span x-text="miniProgram.unpacking ? '解包中...' : '解包选中缓存包'"></span>
+          </button>
+          <template x-if="miniProgram.unpackResult">
+            <div class="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+              <div class="font-medium">已解包 <span x-text="miniProgram.unpackResult.written_count"></span> 个文件</div>
+              <div class="mt-1 break-all font-mono text-[11px]" x-text="miniProgram.unpackResult.output_dir"></div>
+            </div>
+          </template>
+          <button @click="dispatchMiniProgramStaticAnalysis()" :disabled="!miniProgram.selectedPath || miniProgram.dispatching"
+            class="mt-3 w-full rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-700 transition shadow-sm shadow-cyan-100 disabled:opacity-30 disabled:cursor-not-allowed">
+            <span x-text="miniProgram.dispatching ? '发送中...' : (projectIsActive() ? '发送到当前项目 AI' : '新建项目并发送 AI')"></span>
+          </button>
+          <p class="mt-1 text-[11px] text-slate-400" x-text="projectIsActive() ? '会把静态分析上下文写入当前项目并声明 AI intent' : '会自动创建小程序静态安全分析项目并声明 AI intent'"></p>
+        </div>
+
+        <!-- HAR dynamic traffic import -->
+        <div class="mt-4 border-t border-slate-100 pt-4">
+          <h4 class="text-sm font-semibold text-slate-700">动态流量（HAR）</h4>
+          <p class="mt-0.5 text-[11px] text-slate-400">上传抓包 HAR 文件做业务逻辑动态测试；若已有静态分析项目则自动联动。</p>
+          <input x-ref="harFileInput" type="file" accept=".har,application/json" class="hidden" @change="selectHarFile($event)">
+          <button type="button" @click="$refs.harFileInput.click()"
+            class="mt-3 w-full rounded-lg border border-dashed border-violet-200 bg-violet-50/50 px-4 py-5 text-center transition hover:bg-violet-50">
+            <svg class="mx-auto h-6 w-6 text-violet-400" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M5 20h14"/></svg>
+            <span class="mt-2 block text-sm font-medium text-slate-700" x-text="miniProgram.harFilename || '选择 .har 文件'"></span>
+            <span class="mt-1 block text-xs text-slate-400" x-text="miniProgram.harFile ? formatBytes(miniProgram.harFile.size) : '最大 80MB'"></span>
+          </button>
+          <div class="mt-3">
+            <label class="mb-1 block text-[11px] font-medium text-slate-400">目标项目</label>
+            <select x-model="miniProgram.harTargetProject"
+              class="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none transition focus:border-violet-300 focus:ring-2 focus:ring-violet-100">
+              <option value="auto" x-text="miniProgram.dispatchResult?.project_id ? ('自动 → ' + miniProgram.dispatchResult.project_id + '（刚建项目，联动）') : (projectIsActive() ? ('自动 → 当前项目 ' + selectedProjectId) : '自动（新建独立项目）')"></option>
+              <template x-for="p in projects.filter(p => p.status === 'active')" :key="p.id">
+                <option :value="p.id" x-text="p.id + ' · ' + (p.title || '').slice(0, 36)"></option>
+              </template>
+              <option value="new">新建独立项目</option>
+            </select>
+          </div>
+          <button @click="dispatchHarDynamicAnalysis()" :disabled="!miniProgram.harFile || miniProgram.harDispatching"
+            class="mt-3 w-full rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 transition shadow-sm shadow-violet-100 disabled:opacity-30 disabled:cursor-not-allowed">
+            <span x-text="miniProgram.harDispatching ? '发送中...' : (miniProgram.harTargetProject === 'new' ? '新建项目并发送 AI' : '注入到目标项目 AI')"></span>
+          </button>
+          <template x-if="miniProgram.harDispatchResult">
+            <div class="mt-3 rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs text-violet-700">
+              <div class="font-medium" x-text="miniProgram.harDispatchResult.created_project ? '已新建动态分析项目' : '已注入到现有项目'"></div>
+              <div class="mt-1 font-mono text-violet-500" x-text="'项目 ' + miniProgram.harDispatchResult.project_id"></div>
+              <div class="mt-1" x-text="'接口 ' + (miniProgram.harDispatchResult.analysis?.counts?.requests ?? 0) + ' 个 · IDOR 候选 ' + (miniProgram.harDispatchResult.analysis?.counts?.idor_candidates ?? 0) + ' 个 · 认证：' + (miniProgram.harDispatchResult.analysis?.auth?.primary || '未识别')"></div>
+            </div>
+          </template>
+        </div>
+
+        <template x-if="miniProgram.result">
+          <div class="mt-4 space-y-2 text-xs">
+            <div class="flex items-center justify-between gap-3"><span class="text-slate-400">格式</span><span class="font-mono text-slate-700" x-text="miniProgram.result.format"></span></div>
+            <div class="flex items-center justify-between gap-3"><span class="text-slate-400">文件数</span><span class="font-mono text-slate-700" x-text="miniProgram.result.package.file_count"></span></div>
+            <div class="flex items-center justify-between gap-3"><span class="text-slate-400">包大小</span><span class="font-mono text-slate-700" x-text="formatBytes(miniProgram.result.package.total_size)"></span></div>
+            <div class="flex items-center justify-between gap-3"><span class="text-slate-400">风险点</span><span class="font-mono text-slate-700" x-text="miniProgram.result.findings.length"></span></div>
+          </div>
+        </template>
+      </section>
+
+      <!-- 右栏：分析结果展示 -->
+      <section class="min-w-0 rounded-lg border border-slate-200 bg-white shadow-sm overflow-hidden">
+        <template x-if="!miniProgram.result">
+          <div class="px-5 py-16 text-center text-slate-400">
+            <svg class="mx-auto h-10 w-10 opacity-50" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M7 4v16"/><path d="M17 4v16"/><path d="M4 17h16"/></svg>
+            <p class="mt-3 text-sm">分析结果会显示在这里</p>
+          </div>
+        </template>
+
+        <template x-if="miniProgram.result">
+          <div>
+            <div class="grid grid-cols-2 md:grid-cols-5 border-b border-slate-100">
+              <div class="p-4 border-r border-slate-100">
+                <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Findings</div>
+                <div class="mt-1 text-xl font-semibold text-rose-500" x-text="miniProgram.result.findings.length"></div>
+              </div>
+              <div class="p-4 border-r border-slate-100">
+                <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Domains</div>
+                <div class="mt-1 text-xl font-semibold text-cyan-600" x-text="miniProgram.result.domains.length"></div>
+              </div>
+              <div class="p-4 border-r border-slate-100">
+                <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Endpoints</div>
+                <div class="mt-1 text-xl font-semibold text-brand-500" x-text="miniProgram.result.endpoints.length"></div>
+              </div>
+              <div class="p-4 border-r border-slate-100">
+                <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">wx APIs</div>
+                <div class="mt-1 text-xl font-semibold text-teal-600" x-text="miniProgram.result.api_calls.length"></div>
+              </div>
+              <div class="p-4">
+                <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Files</div>
+                <div class="mt-1 text-xl font-semibold text-slate-700" x-text="miniProgram.result.files.length"></div>
+              </div>
+            </div>
+
+            <div class="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 md:flex-row md:items-center md:justify-between">
+              <div class="flex flex-wrap gap-1.5">
+                <template x-for="tab in miniProgramTabs()" :key="tab.id">
+                  <button @click="miniProgram.tab = tab.id" class="px-3 py-1.5 rounded-lg border text-xs font-medium transition"
+                    :class="miniProgram.tab === tab.id ? 'border-cyan-300 bg-cyan-50 text-cyan-700' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'">
+                    <span x-text="tab.label"></span>
+                    <span class="ml-1 font-mono opacity-70" x-text="tab.count"></span>
+                  </button>
+                </template>
+              </div>
+              <div class="relative min-w-0 md:w-72">
+                <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                <input x-model.trim="miniProgram.query" placeholder="搜索当前结果" class="h-9 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-600 outline-none transition placeholder:text-slate-300 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-100">
+              </div>
+            </div>
+
+            <div class="max-h-[50vh] overflow-auto">
+              <div x-show="miniProgram.tab === 'findings'" class="divide-y divide-slate-100">
+                <template x-if="miniProgramFilteredFindings().length === 0">
+                  <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的风险点</div>
+                </template>
+                <template x-for="finding in miniProgramFilteredFindings()" :key="`${finding.title}-${finding.file}-${finding.line}-${finding.evidence}`">
+                  <article class="p-4">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <span class="rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" :class="miniSeverityClass(finding.severity)" x-text="finding.severity"></span>
+                      <h4 class="text-sm font-semibold text-slate-700" x-text="finding.title"></h4>
+                    </div>
+                    <p class="mt-2 text-sm leading-relaxed text-slate-500" x-text="finding.detail"></p>
+                    <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                      <span class="font-mono break-all" x-text="finding.file || 'package'"></span>
+                      <span x-show="finding.line" x-text="`line ${finding.line}`"></span>
+                      <span class="font-mono break-all text-slate-500" x-text="finding.evidence"></span>
+                    </div>
+                  </article>
+                </template>
+              </div>
+
+              <div x-show="miniProgram.tab === 'domains'" class="divide-y divide-slate-100">
+                <template x-if="miniProgramFilteredDomains().length === 0">
+                  <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的域名</div>
+                </template>
+                <template x-for="domain in miniProgramFilteredDomains()" :key="`${domain.scheme}-${domain.host}`">
+                  <div class="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-3 text-sm">
+                    <span class="font-mono text-slate-700 break-all" x-text="domain.host"></span>
+                    <span class="rounded-md bg-slate-100 px-2 py-1 text-[11px] text-slate-500" x-text="domain.scheme"></span>
+                    <span class="font-mono text-xs text-slate-400" x-text="domain.count"></span>
+                  </div>
+                </template>
+              </div>
+
+              <div x-show="miniProgram.tab === 'endpoints'" class="divide-y divide-slate-100">
+                <template x-if="miniProgramFilteredEndpoints().length === 0">
+                  <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的接口</div>
+                </template>
+                <template x-for="endpoint in miniProgramFilteredEndpoints()" :key="`${endpoint.url}-${endpoint.file}-${endpoint.line}`">
+                  <div class="px-4 py-3 text-sm">
+                    <div class="font-mono text-slate-700 break-all" x-text="endpoint.url"></div>
+                    <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                      <span x-text="endpoint.host || endpoint.scheme"></span>
+                      <span class="font-mono break-all" x-text="endpoint.file"></span>
+                      <span x-show="endpoint.line" x-text="`line ${endpoint.line}`"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+
+              <div x-show="miniProgram.tab === 'apis'" class="divide-y divide-slate-100">
+                <template x-if="miniProgramFilteredApis().length === 0">
+                  <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的 wx API</div>
+                </template>
+                <template x-for="api in miniProgramFilteredApis()" :key="api.api">
+                  <div class="px-4 py-3 text-sm">
+                    <div class="flex items-center justify-between gap-3">
+                      <span class="font-mono font-semibold text-slate-700" x-text="api.api"></span>
+                      <span class="font-mono text-xs text-slate-400" x-text="api.count"></span>
+                    </div>
+                    <div class="mt-1 text-[11px] text-slate-400 break-all" x-text="api.files.join(', ')"></div>
+                  </div>
+                </template>
+              </div>
+
+              <div x-show="miniProgram.tab === 'files'" class="divide-y divide-slate-100">
+                <template x-if="miniProgramFilteredFiles().length === 0">
+                  <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的文件</div>
+                </template>
+                <template x-for="file in miniProgramFilteredFiles()" :key="file.path">
+                  <div class="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-4 py-3 text-sm">
+                    <span class="font-mono text-slate-700 break-all" x-text="file.path"></span>
+                    <span class="rounded-md px-2 py-1 text-[11px]" :class="file.text ? 'bg-teal-50 text-teal-700' : 'bg-slate-100 text-slate-500'" x-text="file.type"></span>
+                    <span class="font-mono text-xs text-slate-400" x-text="formatBytes(file.size)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <template x-if="miniProgram.result.notes.length > 0">
+              <div class="border-t border-slate-100 bg-amber-50/50 px-4 py-3 text-xs text-amber-700">
+                <template x-for="note in miniProgram.result.notes" :key="note">
+                  <div x-text="note"></div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+      </section>
+    </div>
+  </div>
+
+  <!-- ── 安卓 App Tab ── -->
+  <div x-show="appAnalysisTab === 'android'" class="flex-1 flex overflow-hidden">
+    <!-- 左栏：APK 静态扫描 -->
+    <div class="w-80 flex flex-col border-r border-slate-200 shrink-0 bg-white overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-200 shrink-0">
+        <h3 class="text-sm font-semibold text-slate-700">安卓 App 分析</h3>
+        <p class="text-[10px] text-slate-400 mt-0.5">浅层静态扫描</p>
+      </div>
+      <div class="flex-1 overflow-y-auto p-3 space-y-3">
+        <!-- APK 上传 -->
+        <div>
+          <input x-ref="androidFileInput" type="file" accept=".apk,.xapk" class="hidden"
+            @change="uploadAndroidApk($event)">
+          <button @click="$refs.androidFileInput.click()" :disabled="android.loading"
+            class="w-full h-8 rounded-lg border border-dashed border-emerald-300 bg-emerald-50/50 text-xs text-emerald-700 hover:bg-emerald-50 transition disabled:opacity-40 flex items-center justify-center gap-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 15V3m0 0-4 4m4-4 4 4"/><path d="M2 17l.621 2.485A2 2 0 0 0 4.561 21h14.878a2 2 0 0 0 1.94-1.515L22 17"/></svg>
+            <span x-text="android.uploading ? '上传中...' : '上传 APK / XAPK'"></span>
+          </button>
+        </div>
+        <!-- APK 路径输入 -->
+        <div class="flex items-center gap-1 text-[10px] text-slate-400">
+          <div class="flex-1 h-px bg-slate-100"></div><span>或输入本机路径</span><div class="flex-1 h-px bg-slate-100"></div>
+        </div>
+        <div class="flex items-center gap-2">
+          <input x-model="android.path" type="text" placeholder="/path/to/app.apk"
+            class="flex-1 h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-emerald-200"
+            @keydown.enter="analyzeAndroidApk()">
+          <button @click="analyzeAndroidApk()" :disabled="!android.path.trim() || android.loading"
+            class="h-8 px-3 rounded-lg bg-emerald-600 text-white text-xs hover:bg-emerald-700 transition disabled:opacity-40 shrink-0">
+            <span x-text="android.loading ? '...' : '分析'"></span>
+          </button>
+        </div>
+        <!-- 目录浏览器 -->
+        <div class="rounded-lg border border-slate-200 overflow-hidden text-xs">
+          <div class="flex items-center gap-1 px-2 py-1.5 bg-slate-50 border-b border-slate-100 flex-wrap">
+            <button @click="browseAndroidDir('')" class="text-emerald-600 hover:underline">主目录</button>
+            <template x-for="(c,i) in (android.browser.crumbs||[])" :key="c.rel">
+              <span class="inline-flex items-center gap-1">
+                <span class="text-slate-300" x-show="i>0||android.browser.crumbs.length>1">/</span>
+                <button x-show="i>0" @click="browseAndroidDir(c.rel)" class="text-emerald-600 hover:underline" x-text="c.name"></button>
+              </span>
+            </template>
+          </div>
+          <div class="max-h-48 overflow-y-auto divide-y divide-slate-50">
+            <button x-show="!android.browser.at_home" @click="browseAndroidDir(android.browser.parent_rel)"
+              class="w-full text-left px-2 py-1.5 hover:bg-slate-50 text-slate-500 flex items-center gap-1.5">
+              <span>📁</span><span>..</span>
+            </button>
+            <template x-for="d in (android.browser.dirs||[])" :key="d.rel">
+              <button @click="browseAndroidDir(d.rel)" class="w-full text-left px-2 py-1.5 hover:bg-slate-50 text-slate-600 flex items-center gap-1.5">
+                <span>📁</span><span class="truncate" x-text="d.name"></span>
+              </button>
+            </template>
+            <template x-for="f in (android.browser.files||[])" :key="f.abs">
+              <button @click="selectAndroidApk(f)" :class="android.path===f.abs?'bg-emerald-50':'hover:bg-slate-50'"
+                class="w-full text-left px-2 py-1.5 flex items-center justify-between gap-2">
+                <span class="flex items-center gap-1.5 min-w-0">
+                  <span x-text="f.suffix==='xapk'?'📦':'📱'"></span>
+                  <span class="truncate font-mono" x-text="f.name"></span>
+                </span>
+                <span class="text-slate-400 shrink-0" x-text="formatBytes(f.size)"></span>
+              </button>
+            </template>
+          </div>
+        </div>
+        <!-- 静态扫描结果摘要 -->
+        <template x-if="android.result">
+          <div class="space-y-2">
+            <div class="rounded-lg border border-slate-200 p-2.5 text-xs text-slate-600 space-y-1">
+              <div class="font-medium text-emerald-700 truncate" x-text="android.result.package?.package_name||'?'"></div>
+              <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-slate-500">
+                <span x-text="(android.result.format||'').toUpperCase()"></span>
+                <span x-text="(android.result.frameworks||[]).join('/')"></span>
+                <span x-text="`DEX ${android.result.package?.dex_count??0}`"></span>
+              </div>
+            </div>
+            <!-- 引导提示 -->
+            <div class="flex items-start gap-1.5 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-[11px] text-emerald-700">
+              <span>✓</span>
+              <span>浅层分析完成。右侧查看扫描详情，点下方按钮派发 jadx 深度反编译。</span>
+            </div>
+            <button @click="dispatchAndroidStaticAnalysis()" :disabled="!android.result||android.dispatching"
+              class="w-full h-10 rounded-lg bg-emerald-600 text-white text-sm font-semibold shadow-sm hover:bg-emerald-700 transition disabled:opacity-40 flex items-center justify-center gap-1.5">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 7l5 5-5 5M6 7l5 5-5 5"/></svg>
+              <span x-text="android.dispatching?'派发中…':'发送到 AI 深度分析（后台）'"></span>
+            </button>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- 右栏：扫描结果 / AI 对话 子视图 -->
+    <div class="flex-1 flex flex-col overflow-hidden bg-slate-50">
+      <!-- 子视图切换条 -->
+      <div class="shrink-0 flex items-center gap-1 border-b border-slate-200 bg-white px-3 py-1.5">
+        <button @click="android.uiPane = 'result'"
+          class="px-2.5 py-1 rounded-lg text-xs font-medium transition"
+          :class="android.uiPane === 'result' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'">扫描结果</button>
+        <button @click="android.uiPane = 'chat'"
+          class="px-2.5 py-1 rounded-lg text-xs font-medium transition inline-flex items-center gap-1.5"
+          :class="android.uiPane === 'chat' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          AI 对话
+          <span x-show="androidChat.dynamicReady" class="px-1 rounded bg-violet-100 text-violet-600 text-[9px] font-semibold">动态</span>
+        </button>
+      </div>
+      <!-- 扫描结果视图 -->
+      <div x-show="android.uiPane === 'result'" class="flex-1 flex flex-col overflow-hidden min-h-0">
+      <template x-if="!android.result">
+        <div class="flex-1 flex items-center justify-center text-slate-400">
+          <div class="text-center">
+            <svg class="mx-auto h-10 w-10 opacity-50" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 18h2"/></svg>
+            <p class="mt-3 text-sm">扫描结果会显示在这里</p>
+          </div>
+        </div>
+      </template>
+
+      <template x-if="android.result">
+        <div class="flex-1 flex flex-col overflow-hidden">
+          <!-- 统计卡 -->
+          <div class="grid grid-cols-2 md:grid-cols-4 border-b border-slate-200 bg-white shrink-0">
+            <div class="p-4 border-r border-slate-100">
+              <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Domains</div>
+              <div class="mt-1 text-xl font-semibold text-cyan-600" x-text="(android.result.domains||[]).length"></div>
+            </div>
+            <div class="p-4 border-r border-slate-100">
+              <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Endpoints</div>
+              <div class="mt-1 text-xl font-semibold text-brand-500" x-text="(android.result.endpoints||[]).length"></div>
+            </div>
+            <div class="p-4 border-r border-slate-100">
+              <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">密钥</div>
+              <div class="mt-1 text-xl font-semibold text-amber-600" x-text="android.result.secrets_count||0"></div>
+            </div>
+            <div class="p-4">
+              <div class="text-[10px] uppercase tracking-[0.16em] text-slate-400">Native Libs</div>
+              <div class="mt-1 text-xl font-semibold text-slate-700" x-text="(android.result.native_libs||[]).length"></div>
+            </div>
+          </div>
+
+          <!-- Tab + 搜索 -->
+          <div class="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 bg-white md:flex-row md:items-center md:justify-between shrink-0">
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="tab in androidTabs()" :key="tab.id">
+                <button @click="android.tab = tab.id" class="px-3 py-1.5 rounded-lg border text-xs font-medium transition"
+                  :class="android.tab === tab.id ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-400 hover:text-slate-600 hover:bg-slate-50'">
+                  <span x-text="tab.label"></span>
+                  <span class="ml-1 font-mono opacity-70" x-text="tab.count"></span>
+                </button>
+              </template>
+            </div>
+            <div class="relative min-w-0 md:w-72">
+              <svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input x-model.trim="android.query" placeholder="搜索当前结果" class="h-9 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-600 outline-none transition placeholder:text-slate-300 focus:border-emerald-300 focus:ring-2 focus:ring-emerald-100">
+            </div>
+          </div>
+
+          <!-- 列表内容 -->
+          <div class="flex-1 overflow-auto bg-white">
+            <div x-show="android.tab === 'domains'" class="divide-y divide-slate-100">
+              <template x-if="androidFilteredDomains().length === 0">
+                <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的域名</div>
+              </template>
+              <template x-for="d in androidFilteredDomains()" :key="d.host">
+                <div class="px-4 py-3 text-sm">
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="font-mono text-slate-700 break-all" x-text="`${d.scheme ? d.scheme + '://' : ''}${d.host}`"></span>
+                    <span class="font-mono text-xs text-slate-400 shrink-0" x-text="d.count"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div x-show="android.tab === 'endpoints'" class="divide-y divide-slate-100">
+              <template x-if="androidFilteredEndpoints().length === 0">
+                <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的接口</div>
+              </template>
+              <template x-for="(e, i) in androidFilteredEndpoints()" :key="i">
+                <div class="px-4 py-3 text-sm">
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="font-mono text-slate-700 break-all" x-text="e.path"></span>
+                    <span class="font-mono text-xs text-slate-400 shrink-0" x-text="e.count"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <div x-show="android.tab === 'secrets'" class="divide-y divide-slate-100">
+              <template x-if="androidFilteredSecrets().length === 0">
+                <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的疑似密钥</div>
+              </template>
+              <template x-for="(s, i) in androidFilteredSecrets()" :key="i">
+                <div class="px-4 py-3 text-xs font-mono text-amber-700 break-all" x-text="s"></div>
+              </template>
+            </div>
+
+            <div x-show="android.tab === 'libs'" class="divide-y divide-slate-100">
+              <template x-if="androidFilteredLibs().length === 0">
+                <div class="px-5 py-10 text-center text-sm text-slate-400">没有匹配的 Native 库</div>
+              </template>
+              <template x-for="(l, i) in androidFilteredLibs()" :key="i">
+                <div class="px-4 py-3 text-sm">
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="font-mono text-slate-700" x-text="l.name"></span>
+                    <span class="text-slate-400 shrink-0 text-xs" x-text="l.abi"></span>
+                  </div>
+                  <div class="mt-0.5 text-[11px] text-slate-400 font-mono" x-text="l.path"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- notes -->
+          <template x-if="(android.result.notes||[]).length > 0">
+            <div class="border-t border-slate-100 bg-amber-50/50 px-4 py-3 text-xs text-amber-700 shrink-0">
+              <template x-for="note in (android.result.notes||[])" :key="note">
+                <div x-text="note"></div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </template>
+      </div><!-- /result 视图 -->
+
+      <!-- AI 对话视图（Android Chat） -->
+      <div x-show="android.uiPane === 'chat'" class="flex-1 flex flex-col overflow-hidden min-h-0">
+        <!-- 空态：未分析 APK -->
+        <template x-if="!androidChat.sessionId">
+          <div class="flex-1 flex items-center justify-center text-slate-400">
+            <div class="text-center px-6">
+              <svg class="mx-auto h-8 w-8 opacity-40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <p class="mt-2 text-sm">先分析一个 APK 即可开始 AI 对话</p>
+              <p class="mt-1 text-[11px] text-slate-400">支持静态问答与动态调试（容器内 adb + frida）</p>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="androidChat.sessionId">
+          <div class="flex-1 flex flex-col overflow-hidden">
+            <!-- 动态调试状态条 -->
+            <div x-show="androidChat.dynamicReady" class="shrink-0 px-3 py-1.5 bg-violet-50/70 border-b border-violet-100 flex items-center gap-2 text-[11px] text-violet-700">
+              <span class="h-1.5 w-1.5 rounded-full bg-violet-500 animate-pulse shrink-0"></span>
+              <span class="font-medium">动态调试会话中</span>
+              <span x-show="androidChat.dynamicDevice" class="truncate font-mono" x-text="androidChat.dynamicDevice"></span>
+              <span class="flex-1"></span>
+              <button @click="stopDynamicChat()" class="px-2 py-0.5 rounded-md bg-violet-600 text-white hover:bg-violet-700 transition">退出动态调试</button>
+            </div>
+            <!-- 对话工具栏：quick actions -->
+            <div class="shrink-0 px-3 pt-2 pb-1 flex flex-wrap gap-1.5 border-b border-slate-100">
+              <template x-if="!androidChat.dynamicMode">
+                <button @click="startDynamicChat()" :disabled="androidChat.dynamicStarting || androidChat.streaming"
+                  class="px-2.5 py-1 rounded-lg border text-[11px] font-medium transition disabled:opacity-40"
+                  :class="androidChat.dynamicReady ? 'border-violet-200 bg-violet-50 text-violet-600' : 'border-violet-200 text-violet-600 hover:bg-violet-50'">
+                  <span x-text="androidChat.dynamicStarting ? '启动中…' : '⚡ 动态调试（真机 hook）'"></span>
+                </button>
+              </template>
+              <template x-for="qa in androidChatQuickActions()" :key="qa.label">
+                <button @click="androidChatSendQuick(qa)" :disabled="!androidChat.sessionId || androidChat.streaming"
+                  class="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50 transition disabled:opacity-40"
+                  x-text="qa.label"></button>
+              </template>
+            </div>
+            <!-- 消息列表 -->
+            <div x-ref="androidChatMessages" class="flex-1 overflow-y-auto px-3 py-2 space-y-2 bg-slate-50/40">
+              <template x-for="msg in androidChat.messages" :key="msg.id">
+                <div class="flex" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
+                  <div class="max-w-[85%] rounded-2xl px-3 py-2 text-[12px] leading-relaxed whitespace-pre-wrap break-words"
+                    :class="msg.role === 'user'
+                      ? 'bg-emerald-600 text-white rounded-br-sm'
+                      : 'bg-white border border-slate-200/70 text-slate-700 rounded-bl-sm'">
+                    <span x-text="msg.content"></span>
+                    <span x-show="androidChat.streaming && msg.id === 'a_' + androidChat._msgIdSeq" class="inline-block ml-0.5 w-1.5 h-3.5 bg-slate-400 animate-pulse align-middle"></span>
+                  </div>
+                </div>
+              </template>
+              <template x-if="androidChat.messages.length === 0 && !androidChat.streaming">
+                <div class="text-center py-8 text-xs text-slate-400">问它关于 APK 的安全问题，或开启动态调试连真机测试</div>
+              </template>
+            </div>
+            <!-- 写回证据图（需先"派发到项目"关联） -->
+            <div x-show="androidChat.linkedProjectId && lastAndroidChatMessage()" class="shrink-0 px-3 py-1 border-t border-slate-100 bg-white/70 flex items-center gap-2">
+              <span class="text-[10px] text-slate-400 truncate">已关联项目，可将最后一条 AI 发现写入证据图</span>
+              <span class="flex-1"></span>
+              <button @click="androidChatPushToGraph(lastAndroidChatMessage().content)"
+                class="shrink-0 px-2 py-0.5 rounded-md bg-slate-700 text-white text-[10px] hover:bg-slate-600 transition">写入证据图</button>
+            </div>
+            <!-- 输入区 -->
+            <div class="shrink-0 border-t border-slate-200 bg-white px-3 py-2">
+              <div class="flex items-end gap-2">
+                <textarea x-model="androidChat.input" @keydown.enter.prevent="sendAndroidChatMessage()"
+                  placeholder="输入消息…（Enter 发送）" rows="1"
+                  class="flex-1 resize-none px-3 py-2 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-200 focus:border-emerald-300 transition placeholder:text-slate-300 max-h-32"></textarea>
+                <button @click="sendAndroidChatMessage()" :disabled="!androidChat.input.trim() || androidChat.streaming || !androidChat.sessionId"
+                  class="shrink-0 px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition disabled:opacity-40 inline-flex items-center gap-1">
+                  <span x-text="androidChat.streaming ? '思考中…' : '发送'"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div><!-- /chat 视图 -->
+    </div>
+  </div>
+</div>

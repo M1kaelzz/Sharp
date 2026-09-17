@@ -1,0 +1,203 @@
+<div x-show="view === 'approvals'" x-cloak class="flex-1 flex flex-col overflow-hidden">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0">
+        <svg class="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+          <path d="M9 12.75 11.25 15 15 9.75"/><path d="M12 21s-7-4.35-9-8.585C1.5 8.5 4.1 5.25 7.5 5.25c1.8 0 3.45.95 4.5 2.4 1.05-1.45 2.7-2.4 4.5-2.4 3.4 0 6 3.25 4.5 7.165C19 16.65 12 21 12 21Z"/>
+        </svg>
+      </div>
+      <span class="font-semibold text-slate-700 tracking-tight">审批中心</span>
+    </div>
+    <div class="flex-1"></div>
+    <span class="text-xs text-slate-400" x-text="`待审批 ${pendingApprovalCount()} 项`"></span>
+  </header>
+
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-7xl mx-auto space-y-5">
+      <!-- 统计面板 -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-rose-500 bg-white p-5">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400">待审批</span>
+            <span class="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
+          </div>
+          <div class="mt-2 text-3xl font-semibold text-rose-600 tabular-nums" x-text="approvalStats.pending ?? 0"></div>
+        </div>
+        <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-teal-500 bg-white p-5">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400">今日批准</span>
+            <svg class="w-4 h-4 text-teal-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg>
+          </div>
+          <div class="mt-2 text-3xl font-semibold text-teal-600 tabular-nums" x-text="approvalStats.today_approved ?? 0"></div>
+        </div>
+        <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-emerald-500 bg-white p-5">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400">累计批准</span>
+            <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg>
+          </div>
+          <div class="mt-2 text-3xl font-semibold text-emerald-600 tabular-nums" x-text="approvalStats.total_approved ?? 0"></div>
+        </div>
+        <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-rose-300 bg-white p-5">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400">累计拒绝</span>
+            <svg class="w-4 h-4 text-rose-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          </div>
+          <div class="mt-2 text-3xl font-semibold text-rose-500 tabular-nums" x-text="approvalStats.total_rejected ?? 0"></div>
+        </div>
+      </div>
+
+      <!-- 紧急模式状态条 -->
+      <template x-if="emergencyProjects.length > 0">
+        <div class="rounded-2xl border border-amber-200/80 bg-amber-50/60 p-4">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
+            <span class="text-xs font-semibold text-amber-700">紧急模式生效中（高危操作自动放行）</span>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="ep in emergencyProjects" :key="ep.id">
+              <span class="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white px-3 py-1 text-xs text-amber-700">
+                <span class="max-w-40 truncate font-medium" x-text="ep.title || ep.id"></span>
+                <span class="text-amber-400" x-text="emergencyRemainingLabel(ep)"></span>
+                <button @click="closeEmergencyMode(ep.id)" class="text-amber-400 hover:text-rose-500 transition" title="关闭紧急模式">✕</button>
+              </span>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- Tab 切换 -->
+      <div class="flex items-center gap-2 flex-wrap">
+        <button @click="loadApprovals('pending')"
+          :class="approvalTab === 'pending' ? 'bg-rose-500 text-white' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium transition">
+          待审批 <span class="ml-1 tabular-nums" x-text="approvalStats.pending ?? 0"></span>
+        </button>
+        <button @click="loadApprovals('approved')"
+          :class="approvalTab === 'approved' ? 'bg-teal-500 text-white' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium transition">已批准</button>
+        <button @click="loadApprovals('rejected')"
+          :class="approvalTab === 'rejected' ? 'bg-rose-300 text-white' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium transition">已拒绝</button>
+        <button @click="loadApprovals('expired')"
+          :class="approvalTab === 'expired' ? 'bg-slate-500 text-white' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium transition">已过期</button>
+        <button @click="loadEmergencyReleases()"
+          :class="approvalTab === 'emergency' ? 'bg-amber-500 text-white' : 'bg-white text-slate-500 hover:bg-slate-50 border border-slate-200'"
+          class="px-3 py-1.5 rounded-lg text-xs font-medium transition">
+          急模式放行
+          <span class="ml-1 tabular-nums" x-show="approvalTab === 'emergency' && emergencyUnreviewedCount()"
+            x-text="emergencyUnreviewedCount()"></span>
+        </button>
+        <div class="flex-1"></div>
+        <button @click="openEmergencyModal()" class="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs hover:bg-amber-600 transition">
+          + 开启紧急模式
+        </button>
+      </div>
+
+      <!-- 急模式放行清单（P1-5）：急模式不产生 pending，人工的介入点是事后复核 -->
+      <template x-if="approvalTab === 'emergency'">
+        <div class="space-y-3">
+          <div class="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 text-xs text-amber-800 leading-relaxed">
+            急模式下高危动作<b>创建即自动放行</b>（不进入待审批），所以这里的<b>复核</b>才是人工把关的落点。
+            <span class="font-semibold" x-show="emergencyUnreviewedCount()"
+              x-text="`当前有 ${emergencyUnreviewedCount()} 条尚未复核。`"></span>
+          </div>
+          <template x-if="!emergencyReleasesLoading && emergencyReleases.length === 0">
+            <div class="text-center py-12 text-slate-400 text-sm">没有急模式放行记录</div>
+          </template>
+          <template x-for="r in emergencyReleases" :key="r.project_id + '/' + r.intent_id">
+            <div class="rounded-xl border border-slate-200/70 bg-white px-4 py-3 space-y-1.5">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                  :class="emergencyRiskClass(r.risk_level)" x-text="r.risk_level"></span>
+                <span class="text-[10px] font-mono text-slate-400"
+                  x-text="(r.project_title || r.project_id) + ' · ' + r.intent_id"></span>
+                <div class="flex-1"></div>
+                <span class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+                  :class="r.reviewed ? 'bg-teal-50 text-teal-700' : 'bg-amber-100 text-amber-700'"
+                  x-text="emergencyVerdictLabel(r.verdict)"></span>
+              </div>
+              <p class="text-xs text-slate-600 break-words" x-text="r.description"></p>
+              <div class="flex flex-wrap items-center gap-2 text-[10px] text-slate-400">
+                <span x-text="'放行于 ' + formatDate(r.released_at)"></span>
+                <span x-text="'执行状态：' + r.status"></span>
+                <span x-show="r.has_evidence" class="text-teal-600">已产出证据</span>
+              </div>
+              <p x-show="r.review_note" class="text-[11px] text-slate-400 break-words" x-text="r.review_note"></p>
+              <div x-show="!r.reviewed" class="flex flex-wrap gap-1.5 pt-0.5">
+                <button @click="reviewEmergencyRelease(r, 'ok')"
+                  class="px-2 py-1 rounded-lg border border-teal-200 text-[11px] text-teal-700 hover:bg-teal-50 transition">确认无碍</button>
+                <button @click="reviewEmergencyRelease(r, 'follow_up')"
+                  class="px-2 py-1 rounded-lg border border-amber-200 text-[11px] text-amber-700 hover:bg-amber-50 transition">需跟进</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <!-- 列表 -->
+      <template x-if="approvalLoading">
+        <div class="rounded-2xl border border-slate-200/60 bg-white p-12 text-center text-slate-400">加载中...</div>
+      </template>
+      <template x-if="approvalTab !== 'emergency' && !approvalLoading && approvalList.length === 0">
+        <div class="rounded-2xl border border-slate-200/60 bg-white px-6 py-12 text-center">
+          <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-50 border border-slate-200/70">
+            <svg class="h-7 w-7" :class="approvalTab === 'pending' ? 'text-teal-500' : 'text-slate-300'" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 2.5 4.5 5.5v5.6c0 4.8 3.3 8.5 7.5 10.1 4.2-1.6 7.5-5.3 7.5-10.1V5.5L12 2.5Z"/>
+              <path x-show="approvalTab === 'pending'" stroke-linecap="round" stroke-linejoin="round" d="m8.5 12 2.4 2.4 4.6-4.8"/>
+            </svg>
+          </div>
+          <p class="text-sm font-semibold text-slate-600" x-text="approvalEmptyState().title"></p>
+          <p class="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-slate-400" x-text="approvalEmptyState().sub"></p>
+        </div>
+      </template>
+      <template x-if="approvalTab !== 'emergency' && !approvalLoading && approvalList.length > 0">
+        <div class="rounded-2xl border border-slate-200/60 bg-white overflow-hidden">
+          <div class="divide-y divide-slate-100">
+            <template x-for="it in approvalList" :key="it.project_id + '/' + it.id">
+              <div class="px-5 py-3.5 flex flex-wrap items-center gap-3 hover:bg-slate-50/60 transition">
+                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0"
+                  :class="riskLevelClass(it.risk_level)">
+                  <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="riskLevelDotClass(it.risk_level)"></span>
+                  <span x-text="riskLevelLabel(it.risk_level)"></span>
+                </span>
+                <div class="flex-1 min-w-[180px]">
+                  <div class="text-sm font-medium text-slate-700 truncate" x-text="it.project_title || it.project_id"></div>
+                  <div class="text-xs text-slate-500 truncate" x-text="it.description"></div>
+                </div>
+                <span class="font-mono text-[11px] text-slate-400 shrink-0" x-text="it.id"></span>
+                <span class="text-[11px] text-slate-400 tabular-nums shrink-0" x-text="formatDate(it.created_at)"></span>
+                <template x-if="approvalTab === 'pending'">
+                  <span class="text-[11px] tabular-nums shrink-0" :class="approvalRemainingHours(it) <= 0 ? 'text-rose-500' : 'text-slate-400'"
+                    x-text="'剩余 ' + approvalRemainingLabel(it)"></span>
+                </template>
+                <div class="flex items-center gap-1.5 shrink-0">
+                  <button @click="openApprovalDetail(it.id, it.project_id)"
+                    class="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-700 transition">详情</button>
+                  <template x-if="approvalTab === 'pending'">
+                    <button @click="approveIntent(it.id, it.project_id)"
+                      :disabled="approvalActing === it.project_id + '/' + it.id"
+                      class="px-2.5 py-1 rounded-lg border border-teal-200 text-xs text-teal-600 hover:bg-teal-50 transition disabled:opacity-40">
+                      <span x-text="approvalActing === it.project_id + '/' + it.id ? '处理中...' : '批准'"></span>
+                    </button>
+                    <button @click="openRejectModal(it.id, it.project_id)"
+                      :disabled="approvalActing === it.project_id + '/' + it.id"
+                      class="px-2.5 py-1 rounded-lg border border-rose-200 text-xs text-rose-500 hover:bg-rose-50 transition disabled:opacity-40">
+                      <span x-text="approvalActing === it.project_id + '/' + it.id ? '处理中...' : '拒绝'"></span>
+                    </button>
+                  </template>
+                  <template x-if="approvalTab !== 'pending'">
+                    <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border"
+                      :class="approvalStatusClass(it.approval_status)">
+                      <span x-text="approvalStatusLabel(it.approval_status)"></span>
+                    </span>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>

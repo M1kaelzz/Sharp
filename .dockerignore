@@ -1,0 +1,31 @@
+# Sharp build context exclusions.
+# docker-compose build context is "." (Dockerfile); keep the context small and
+# keep secrets / local data / heavy dirs off the wire to the Docker daemon.
+
+# Secrets & licensing — never enter a build context
+.secrets
+datas/sharp/secrets.env
+datas/sharp/license_signing_key.b64
+license.key
+*.key
+
+# Local data & reports
+datas/sharp/*.db
+datas/sharp/*.db-wal
+datas/sharp/*.db-shm
+reports/
+
+# Heavy / not needed by the Dockerfile build
+container/
+runtime/.venv/
+runtime/tests/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build output & VCS
+dist/
+build/
+.buildenv/
+.git/
+.DS_Store

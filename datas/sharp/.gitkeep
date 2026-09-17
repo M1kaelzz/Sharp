@@ -1,0 +1,1 @@
+Runtime data lives here (SQLite DB, secrets.env, license key) and is never committed.

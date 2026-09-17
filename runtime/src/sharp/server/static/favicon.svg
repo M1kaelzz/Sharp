@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="SharpEye">
+  <defs>
+    <linearGradient id="bg" x1="32" y1="24" x2="224" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#071014"/>
+      <stop offset="0.58" stop-color="#0b1720"/>
+      <stop offset="1" stop-color="#10242b"/>
+    </linearGradient>
+    <linearGradient id="cyan" x1="64" y1="82" x2="196" y2="184" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e6fbff"/>
+      <stop offset="0.5" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#0ea5b7"/>
+    </linearGradient>
+    <linearGradient id="green" x1="91" y1="90" x2="170" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d9ffe0"/>
+      <stop offset="1" stop-color="#7ddf64"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.13 0 0 0 0 0.83 0 0 0 0 0.93 0 0 0 0.85 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <path d="M50 128c20-34 47-51 78-51s58 17 78 51c-20 34-47 51-78 51s-58-17-78-51Z" fill="none" stroke="url(#cyan)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <circle cx="128" cy="128" r="34" fill="#071014" stroke="url(#cyan)" stroke-width="8"/>
+  <circle cx="128" cy="128" r="14" fill="url(#green)"/>
+  <path d="M128 91v22M128 143v22M91 128h22M143 128h22" stroke="#e6fbff" stroke-width="8" stroke-linecap="round"/>
+  <path d="M77 78a72 72 0 0 1 102-1M180 178a72 72 0 0 1-104 0" fill="none" stroke="#7ddf64" stroke-width="7" stroke-linecap="round" opacity=".9"/>
+  <path d="M49 93V65h28M207 163v28h-28" fill="none" stroke="#22d3ee" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M64 202 202 64" stroke="#e6fbff" stroke-width="5" stroke-linecap="round" opacity=".24"/>
+</svg>

@@ -1,0 +1,50 @@
+[project]
+name = "sharp"
+version = "0.2.1"
+description = "Fact-graph based collaborative exploration protocol"
+authors = [
+    { name = "leixiao", email = "1729888211@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "docker>=7.1.0",
+    "requests>=2.32.3",
+    "cryptography>=45.0.7",
+]
+
+[project.optional-dependencies]
+desktop = [
+    "pywebview>=5.4",
+]
+
+[project.scripts]
+sharp = "sharp.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.8.9,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+# Kept empty ON PURPOSE — test tools are never locked into the runtime venv.
+# The launcher runs `uv sync --locked` (which would otherwise install the dev
+# group into the runtime venv on every `./sharp` start) and CI mirrors that
+# with `uv sync --project runtime --locked`. pytest/httpx (HTTP-layer ASGI
+# tests) are pulled ephemerally per run instead — see the canonical command
+# below in [tool.pytest.ini_options].
+dev = []
+
+# Canonical test command (CI + local):
+#     uv run --project runtime --with pytest --with httpx pytest -q
+# pytest/httpx are intentionally NOT locked dependencies: locking them would
+# break `uv sync --locked` and would pull test deps into the runtime venv on
+# every `./sharp` start. Ephemeral `--with` keeps the runtime venv clean.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
