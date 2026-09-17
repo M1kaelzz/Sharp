@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '83cb59cb-237c-417c-b0ef-2b007eb4530e'
-  PropagateID: '83cb59cb-237c-417c-b0ef-2b007eb4530e'
-  ReservedCode1: '5f4e59ab-16a7-4a44-a879-7090b03ed371'
-  ReservedCode2: '5f4e59ab-16a7-4a44-a879-7090b03ed371'
+  ProduceID: '2bbab29e-fa77-4890-ae00-590f7d41d667'
+  PropagateID: '2bbab29e-fa77-4890-ae00-590f7d41d667'
+  ReservedCode1: 'bbf82d0c-ae1d-43ca-a031-c3c86e9bdd63'
+  ReservedCode2: 'bbf82d0c-ae1d-43ca-a031-c3c86e9bdd63'
 ---
 
 # Sharp 变更记录 (CHANGELOG)
@@ -69,6 +69,8 @@ AIGC:
   （Alpine / Tailwind / Cytoscape / SSE）、Worker 镜像（claude-code + 扫描器链）三层技术栈表。
 - **镜像环境搭建章节**：补充 vendor 拉取、架构一致性（`.arch` 防混用）、国内镜像加速、验证命令。
 - **英文版同步**：`README.en.md` 与中文版结构对齐（截图占位 / 架构 / 技术栈 / 镜像搭建 / License）。
+- **测试对象章节**：新增「测试对象」——Web 站点 / 微信小程序 / Android App 三类授权测试对象的能力表，
+  及共享基底（资产聚组、共用工具链、冷路径优先、结论沉淀为证据）；中英文同步。
 
 ---
 

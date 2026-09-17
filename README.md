@@ -3,13 +3,13 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '714d1303-0673-485c-bbea-e09194d0b13b'
-  PropagateID: '714d1303-0673-485c-bbea-e09194d0b13b'
-  ReservedCode1: '9db64d6d-9d6f-4755-af4a-674e7bc0a424'
-  ReservedCode2: '9db64d6d-9d6f-4755-af4a-674e7bc0a424'
+  ProduceID: '0a103700-fcdc-4eca-b611-45a4477a28a4'
+  PropagateID: '0a103700-fcdc-4eca-b611-45a4477a28a4'
+  ReservedCode1: '745f6930-5fb2-4fec-a23d-9b8f05b5346c'
+  ReservedCode2: '745f6930-5fb2-4fec-a23d-9b8f05b5346c'
 ---
 
-# Sharp
+Sharp
 
 **面向授权渗透测试的任务执行系统**：把一次授权测试建模成一张「证据 → 行动」图，由容器内 AI worker 自主推进，人工闸门卡住高危动作，全程留痕、可查询、可续跑。
 
@@ -59,6 +59,23 @@ Sharp 不是扫描器，也不是通用 agent 框架。它解决的是**长周�
 | **资产** | 被测对象与它的接口账本 | `asset_endpoints` |
 
 完整术语表与命名约定见 `docs/GLOSSARY.md`；为什么这样建模见 `docs/adr/0003-evidence-action-graph.md`。
+
+## 测试对象
+
+Sharp 面向三类授权测试对象，共享同一套证据—行动图、审批闸门与资产账本（`docs/USAGE.md` 有各类型的完整操作流程）：
+
+| 对象 | 资产标识 | 入口 | 能力 |
+|---|---|---|---|
+| **Web 站点** | 域名（自动从 Origin 提取） | 新建项目选「Web」 | 端口/服务发现（nmap、naabu）、指纹（httpx）、目录与参数挖掘（katana、ffuf）、漏洞验证（nuclei、dalfox） |
+| **微信小程序** | AppID（上传 `.wxapkg` 或指定包路径） | 小程序分析器 | 静态分析：包结构解码、app.json 路由画像（页面总数/分包/权限声明/**冷路径路由**）、AI 深度分析；HAR 动态分析联动 |
+| **Android App** | 包名（上传 APK 或指定路径） | APK 分析器 | 静态分析：Manifest 结构化解码（包名/版本/权限/组件类名）、**加固壳识别**（libjiagu/乐固/娜迦/爱加密等）、dex 字符串扫描、AI 深度分析；动态分析：真机 adb / frida hook / 脱壳 |
+
+**共同基底**（三类测试复用同一套能力）：
+
+- **资产会聚组**：同一域名 / AppID / 包名开的多个项目自动聚成**一组资产**，资产中心直接看到"这家公司测到哪了、还差什么"（类型徽章 Web/小程序/App + ⚠高危漏洞合计）。
+- **同类测试共享工具链**：Web 与小程序/App 的 AI agent 都在同一个 Worker 容器内，扫描器（nmap/nuclei/httpx…）与移动工具链（adb/apktool/jadx/dex2jar）共用。
+- **冷路径优先**：小程序分析会给出 tabBar 不可达的**冷路径路由**（常缺统一鉴权），AI 优先探测；App 分析同理给"先脱壳再反编译"的明确指引。
+- **结论沉淀为证据**：三类测试的发现都写进同一张证据—行动图，跨任务复用（第二次测同一目标直接看到"测过什么、还差什么"）。
 
 ## 架构总览
 

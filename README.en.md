@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'e7264b11-f795-4a40-a024-952c1b8b9be9'
-  PropagateID: 'e7264b11-f795-4a40-a024-952c1b8b9be9'
-  ReservedCode1: '61c3e4f5-25d1-4b08-9d75-8175fa471a54'
-  ReservedCode2: '61c3e4f5-25d1-4b08-9d75-8175fa471a54'
+  ProduceID: '33d172a9-69dc-464e-8b90-3d3853126342'
+  PropagateID: '33d172a9-69dc-464e-8b90-3d3853126342'
+  ReservedCode1: 'f0aef46f-2444-4252-a883-d622f1420754'
+  ReservedCode2: 'f0aef46f-2444-4252-a883-d622f1420754'
 ---
 
 # Sharp
@@ -68,6 +68,31 @@ Sharp is not a scanner and not a general agent framework. It solves the *enginee
 Full glossary and naming conventions: `docs/GLOSSARY.md`. Why the graph: `docs/adr/0003-evidence-action-graph.md`.
 (These documents are currently Chinese; English translations are tracked as a follow-up — see
 `docs/OPENSOURCE_RELEASE.md`.)
+
+## Test targets
+
+Sharp covers three kinds of authorized test targets, all sharing the same evidence–action graph,
+approval gate, and asset ledger (see `docs/USAGE.md` for full workflows):
+
+| Target | Asset id | Entry point | Capabilities |
+|---|---|---|---|
+| **Web site** | domain (auto-extracted from Origin) | New project → Web | Port/service discovery (nmap, naabu), fingerprinting (httpx), crawling & param fuzzing (katana, ffuf), vuln verification (nuclei, dalfox) |
+| **WeChat mini-program** | AppID (upload `.wxapkg` or give a package path) | Mini-program analyzer | Static: package decode, app.json route profile (page count / subpackages / permissions / **cold routes**), AI deep analysis; HAR dynamic analysis |
+| **Android app** | package name (upload APK or give a path) | APK analyzer | Static: manifest decode (package/version/permissions/component classes), **packer detection** (libjiagu/legu/naga/ijiami…), dex string scan, AI deep analysis; Dynamic: real-device adb / frida hook / unpacking |
+
+**Shared base** (all three target types reuse the same machinery):
+
+- **Assets group across projects**: projects on the same domain / AppID / package name merge into
+  one asset group in the Asset Center — "what has been tested at this company, and what is left"
+  at a glance (type badge Web/Mini-program/App + ⚠ critical vuln count).
+- **Shared toolchain.** Web and mobile agents live in the same worker container; scanners
+  (nmap/nuclei/httpx…) and the mobile chain (adb/apktool/jadx/dex2jar) are shared.
+- **Cold paths first.** Mini-program analysis surfaces tabBar-unreachable **cold routes** (often
+  missing centralized auth), which the AI probes first; APK analysis likewise tells the agent to
+  unpack before decompiling instead of wasting jadx on a packer stub.
+- **Findings become evidence.** Discoveries from all three target types land in the same
+  evidence–action graph and accumulate across engagements — the second run on the same target
+  starts from "what was tested, what is left".
 
 ## Architecture overview
 
