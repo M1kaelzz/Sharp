@@ -1,0 +1,24 @@
+flowchart LR
+    subgraph Facts["证据库 Facts (SQLite)"]
+        F1["事实: 目标存活<br/>192.168.1.10:80 开放"]
+        F2["事实: 中间件<br/>nginx/1.18.0"]
+        F3["事实: 漏洞<br/>CVE-2021-23017"]
+    end
+
+    subgraph Actions["行动 Intents"]
+        A1["行动: 端口扫描<br/>nmap -sV"]
+        A2["行动: 指纹识别<br/>httpx -tech-detect"]
+        A3["行动: 漏洞验证<br/>nuclei -t cve"]
+    end
+
+    H["人工线索 Hint"]
+    AP["人工审批闸门<br/>(高危默认拦截)"]
+
+    H -->|方向提示| A1
+    A1 -->|产出| F1
+    F1 --> A2
+    A2 -->|产出| F2
+    F2 --> A3
+    A3 -.->|高危需审批| AP
+    AP -->|通过后执行| A3
+    A3 -->|产出| F3

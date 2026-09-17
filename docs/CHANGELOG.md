@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '4ca4908b-88d2-411e-89cd-0447f4f3caa1'
-  PropagateID: '4ca4908b-88d2-411e-89cd-0447f4f3caa1'
-  ReservedCode1: 'b9f80040-9599-438b-81c4-005e7f4076c1'
-  ReservedCode2: 'b9f80040-9599-438b-81c4-005e7f4076c1'
+  ProduceID: '83cb59cb-237c-417c-b0ef-2b007eb4530e'
+  PropagateID: '83cb59cb-237c-417c-b0ef-2b007eb4530e'
+  ReservedCode1: '5f4e59ab-16a7-4a44-a879-7090b03ed371'
+  ReservedCode2: '5f4e59ab-16a7-4a44-a879-7090b03ed371'
 ---
 
 # Sharp 变更记录 (CHANGELOG)
@@ -55,6 +55,20 @@ AIGC:
   （加了浏览器会拒绝存储，用户无法登录），HTTPS 时自动加。
 
 **测试**：724 passed；`check_methods` / `check_docs` 均通过；三个打包脚本自检 + 成品包自检均通过。
+
+### 文档｜README 重构（图片占位 + 架构图 + 技术栈 + 镜像搭建）
+
+**类别**：README 完善（开源发布就绪度）
+
+- **截图预览章节**：为 3 张界面截图预留位置（证据—行动图 / 任务看板与审批 / 资产中心），
+  拍摄要点写入 `docs/screenshots/README.md`，截图后放入 `docs/screenshots/` 即自动生效。
+- **架构图**：新增 `docs/assets/architecture.mmd`（三进程协作）与 `docs/assets/evidence-action.mmd`
+  （证据→行动闭环）两张 Mermaid 图，渲染为 PNG 直接引用（`docs/assets/*.png`），并在 README 中
+  保留 Mermaid 源码块供 GitHub 自动渲染。
+- **技术栈章节**：新增后端（FastAPI / SQLite(WAL) / uvicorn / Docker SDK）、前端
+  （Alpine / Tailwind / Cytoscape / SSE）、Worker 镜像（claude-code + 扫描器链）三层技术栈表。
+- **镜像环境搭建章节**：补充 vendor 拉取、架构一致性（`.arch` 防混用）、国内镜像加速、验证命令。
+- **英文版同步**：`README.en.md` 与中文版结构对齐（截图占位 / 架构 / 技术栈 / 镜像搭建 / License）。
 
 ---
 

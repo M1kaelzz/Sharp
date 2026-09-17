@@ -1,0 +1,19 @@
+flowchart TB
+    subgraph Host["宿主机 (macOS / Linux)"]
+        UI["前端 SPA<br/>Alpine + Tailwind + Cytoscape"]
+        SRV["Sharp Server<br/>FastAPI + SQLite(WAL)<br/>协议真相源"]
+        DISP["Dispatcher<br/>单线程调度循环<br/>唯一 agent-fact 写入方"]
+    end
+
+    subgraph Docker["Docker"]
+        W1["Worker 容器 A<br/>claude-code agent + 扫描器"]
+        W2["Worker 容器 B<br/>claude-code agent + 扫描器"]
+    end
+
+    UI -->|REST / SSE 实时推送| SRV
+    SRV -->|读写 API| DISP
+    DISP -->|docker exec 注入命令| W1
+    DISP -->|docker exec 注入命令| W2
+    W1 -->|写证据/结论| SRV
+    W2 -->|写证据/结论| SRV
+    SRV -->|共享 SQLite 图| SRV
