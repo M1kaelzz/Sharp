@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: 'a903d656-97cf-4e14-9067-ce9acf21edad'
-  PropagateID: 'a903d656-97cf-4e14-9067-ce9acf21edad'
-  ReservedCode1: '3dc09834-6ed0-43e9-b5fa-d2252de5dc44'
-  ReservedCode2: '3dc09834-6ed0-43e9-b5fa-d2252de5dc44'
----
-
 # Sharp
 
 **A task-execution system for authorized penetration testing.** It models an engagement as an
@@ -30,57 +19,15 @@ The authors and contributors of this project are not liable for any direct or in
 arising from the use or misuse of this tool. By using this tool you acknowledge that you have read
 and understood this disclaimer and agree to assume all associated risks.
 
-See `SECURITY.md` for the threat model and operator hardening checklist.
-
 ---
 
 ## Screenshots
 
-> 📷 Placeholders below — replace with your own screenshots under `docs/screenshots/`.
-
 | Screen | Screenshot | What to capture |
 |---|---|---|
 | **Evidence–action graph** | ![Graph](docs/screenshots/graph.png) | Fact/action nodes with edges, bloodline highlight, critical nodes with red border |
-| **Dashboard & approval** | ![Dashboard](docs/screenshots/dashboard.png) | Project list, high-risk action pending human approval (the core differentiator) |
-| **Asset center** | ![Assets](docs/screenshots/assets.png) | Asset list, endpoint ledger, tested/untested coverage |
-
-Suggested: width ≥ 1280px, PNG, saved under `docs/screenshots/` — the placeholders above will
-then resolve automatically.
-
----
-
-## What it is
-
-Sharp is not a scanner and not a general agent framework. It solves the *engineering* problems of
-**long-running** authorized testing:
-
-- **State outlives the process.** Conclusions are written into a graph (SQLite), so restarts and
-  container rebuilds do not wipe progress — unlike "conversation history as state", which starts
-  over on every crash.
-- **Conclusions are traceable.** Every piece of evidence records which action produced it and which
-  evidence it rests on, so "why is this finding confirmed?" is a query, not an interview.
-- **Boundaries do not depend on the model behaving.** High-risk actions pass a human approval gate
-  that sits on the graph write path — you cannot bypass it by driving the API instead of the UI.
-- **Assets accumulate.** The endpoint ledger for a host / mini-program / APK is shared across
-  engagements, so the second run starts from "what was tested, what is left".
-- **Artifacts are classified.** Findings and other structured discoveries share one view. **Scored
-  mode (CTF / benchmark) is opt-in** (`task_mode: scored`) and only then do flags and scoring exist —
-  a pentest project never shows a "score".
-
-## Core concepts
-
-| Concept | In one line | Internal id |
-|---|---|---|
-| **Evidence** | Confirmed facts: targets, endpoints, credentials, verified conclusions | `facts` |
-| **Action** | One exploration step: start from evidence, test a hypothesis, produce new evidence | `intents` |
-| **Hint** | Direction supplied by the human operator | `hints` |
-| **Phase goal** | Mid-level milestone that cuts a long task into settleable stages | `sub_goals` |
-| **Artifact** | Vulnerabilities / flags / other findings | `vulnerabilities` |
-| **Asset** | The tested object and its endpoint ledger | `asset_endpoints` |
-
-Full glossary and naming conventions: `docs/GLOSSARY.md`. Why the graph: `docs/adr/0003-evidence-action-graph.md`.
-(These documents are currently Chinese; English translations are tracked as a follow-up — see
-`docs/OPENSOURCE_RELEASE.md`.)
+| **Dashboard & approval** | ![Dashboard](docs/screenshots/dashboard.png) | Details of confirmed vulnerabilities, etc. |
+| **Vulnerability Database** | ![Assets](docs/screenshots/assets.png) | Details of confirmed vulnerabilities, etc. |
 
 ## Test targets
 
@@ -302,5 +249,3 @@ python3 ../scripts/check_docs.py                 # docs ↔ code consistency
 AGPL-3.0 (`LICENSE`). Third-party components and their licenses: `THIRD_PARTY_NOTICES.md`.
 A commercial license (Ed25519 offline signing) covers the desktop distribution — see
 `docs/OPENSOURCE_RELEASE.md`.
-
-> AI生成

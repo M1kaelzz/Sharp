@@ -1,15 +1,4 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: 'b04d55d1-51db-42f2-98af-e06e346c584e'
-  PropagateID: 'b04d55d1-51db-42f2-98af-e06e346c584e'
-  ReservedCode1: 'ea247d8b-31eb-41d9-b464-b3ab5a5a2c04'
-  ReservedCode2: 'ea247d8b-31eb-41d9-b464-b3ab5a5a2c04'
----
-
-Sharp
+# Sharp
 
 **面向授权渗透测试的任务执行系统**：把一次授权测试建模成一张「证据 → 行动」图，由容器内 AI worker 自主推进，人工闸门卡住高危动作，全程留痕、可查询、可续跑。
 
@@ -29,17 +18,9 @@ Sharp
 
 | 界面 | 截图 | 拍摄要点 |
 |---|---|---|
-| **证据—行动图** | ![证据图](docs/screenshots/graph.png) | 证据（fact）节点与行动（intent）节点的连线、血缘关系、高危节点红色边框 |
-| **任务看板与审批** | ![任务看板](docs/screenshots/dashboard.png) | 项目列表、行动审批闸门弹窗（高危待批）、任务进度 |
-| **资产中心** | ![资产中心](docs/screenshots/assets.png) | 资产清单、接口账本、已测/待测覆盖视图 |
-
-**截图清单（拍摄要点）**：
-
-1. `graph.png` — 打开某项目 → 证据—行动图视图。展示：节点 + 连线 + 血缘高亮，最好有一个**高危（红色边框）漏洞节点**。
-2. `dashboard.png` — 项目看板。展示：项目列表 + 任务状态 + 一个**待审批的高危行动**弹窗（这是 Sharp 的核心差异化：人工闸门）。
-3. `assets.png` — 资产中心。展示：资产列表 + 接口账本 + 已测/待测覆盖情况。
-
-> 建议截图尺寸：宽 ≥ 1280px，PNG 格式，放到 `docs/screenshots/` 后 README 中的占位链接即自动生效。
+| **证据—行动图** | ![证据图](docs/screenshots/graph.png) | 证据（fact）节点与行动（intent）节点的连线、血缘关系、高危节点红色边框等 |
+| **任务看板与审批** | ![任务看板](docs/screenshots/dashboard.png) | 项目列表、行动审批闸门弹窗（高危待批）、任务进度等 |
+| **漏洞库** | ![资产中心](docs/screenshots/assets.png) | 已确认漏洞详情等 |
 
 ---
 
@@ -265,5 +246,3 @@ python3 ../scripts/check_methods.py              # 前端 Alpine 方法完整性
 - 本开源包按 **AGPL-3.0** 发布，详见 `LICENSE`。
 - 另有**商业授权**（Ed25519 离线授权）用于桌面发行版，见 `docs/OPENSOURCE_RELEASE.md`。
 - 第三方组件许可见 `THIRD_PARTY_NOTICES.md`。
-
-> AI生成
