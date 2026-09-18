@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: '33d172a9-69dc-464e-8b90-3d3853126342'
-  PropagateID: '33d172a9-69dc-464e-8b90-3d3853126342'
-  ReservedCode1: 'f0aef46f-2444-4252-a883-d622f1420754'
-  ReservedCode2: 'f0aef46f-2444-4252-a883-d622f1420754'
+  ProduceID: 'a903d656-97cf-4e14-9067-ce9acf21edad'
+  PropagateID: 'a903d656-97cf-4e14-9067-ce9acf21edad'
+  ReservedCode1: '3dc09834-6ed0-43e9-b5fa-d2252de5dc44'
+  ReservedCode2: '3dc09834-6ed0-43e9-b5fa-d2252de5dc44'
 ---
 
 # Sharp
@@ -15,9 +15,22 @@ AIGC:
 evidence→action graph, lets an AI worker inside a container drive the work, gates high-risk actions
 behind human approval, and keeps everything recorded, queryable, and resumable.
 
-> ⚠️ Use only against systems you have **explicit written authorization** to test. Unauthorized
-> testing, exploitation, or data access may be illegal. You are responsible for your actions.
-> See `SECURITY.md` for the threat model and operator hardening checklist.
+## Disclaimer
+
+This project is intended solely for **security research, educational demonstrations, and
+penetration testing conducted with explicit written authorization**. Users must obtain **explicit
+written permission** from the target system owner before any testing and must operate strictly
+within the scope of that authorization.
+
+**Unauthorized scanning, probing, exploitation, or data access against systems you do not own or
+have permission to test may violate applicable laws and regulations. Users bear full legal
+responsibility for their actions.**
+
+The authors and contributors of this project are not liable for any direct or indirect damages
+arising from the use or misuse of this tool. By using this tool you acknowledge that you have read
+and understood this disclaimer and agree to assume all associated risks.
+
+See `SECURITY.md` for the threat model and operator hardening checklist.
 
 ---
 
