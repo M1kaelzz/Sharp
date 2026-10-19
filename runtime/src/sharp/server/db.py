@@ -344,6 +344,30 @@ CREATE TABLE IF NOT EXISTS maintenance_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- P1-3 real token metering: one row per claude invocation (execute or
+-- conclude phase), written best-effort by the dispatcher when the worker
+-- enables SHARP_TOKEN_METERING=1. Pure additive observability — nothing reads
+-- these rows to decide behavior.
+CREATE TABLE IF NOT EXISTS task_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL DEFAULT '',
+    intent_id TEXT NOT NULL DEFAULT '',
+    worker_name TEXT NOT NULL DEFAULT '',
+    task_type TEXT NOT NULL DEFAULT '',
+    phase TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+    total_cost_usd REAL NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id, created_at);
 """
 
 

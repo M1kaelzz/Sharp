@@ -3,6 +3,12 @@ server: "http://localhost:8000"
 
 # Shared environment variables merged into every worker.
 common_env:
+  # P1-3 real token metering (default OFF). Set to "1" to make every claude
+  # invocation inject --output-format json; the dispatcher then records the
+  # token usage (input/output/cache + total_cost_usd) best-effort into the
+  # task_usage table. Requires a claude CLI version that supports the flag.
+  # NOTE: read once at dispatcher start; changing it requires a restart.
+  # SHARP_TOKEN_METERING: "1"
   # Android dynamic testing (frida / panda-dex-dumper):
   # The worker container cannot see USB devices. This variable tells adb inside
   # the container to connect to the HOST's adb server over TCP instead.

@@ -24,10 +24,12 @@ from sharp.dispatcher.tasks.common import (
     inject_mcp_flags,
     log_payload_keys,
     preflight_mcp,
-    project_allows_conclude_fallback,
     preview,
+    project_allows_conclude_fallback,
+    record_task_usage_best_effort,
     run_healthcheck,
     run_worker_process,
+    unpack_live_output,
     write_conclude_result_with_fact_id,
 )
 from sharp.dispatcher.workers.registry import get_driver
@@ -142,11 +144,22 @@ def run_bootstrap_task(
             lease=lease,
             cancellation=cancellation,
             stdout_callback=lambda text: client.push_live_output(
-                project.project.id, intent.id, worker.name, text
+                project.project.id, intent.id, worker.name, unpack_live_output(text)
             ),
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, first.stdout, first.stderr)
+        record_task_usage_best_effort(
+            client,
+            driver,
+            worker,
+            first,
+            project_id=project.project.id,
+            intent_id=intent.id,
+            task_type="bootstrap",
+            phase="execute",
+            duration_ms=execute_ms,
+        )
         cancelled = cancel_reason(first, cancellation)
         if cancelled is not None:
             LOG.info(
@@ -372,6 +385,17 @@ def _try_conclude_fallback(
             cancellation=cancellation,
         )
         conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
+        record_task_usage_best_effort(
+            client,
+            driver,
+            worker,
+            result,
+            project_id=project.project.id,
+            intent_id=intent.id,
+            task_type="bootstrap",
+            phase="conclude",
+            duration_ms=conclude_ms,
+        )
         cancelled = cancel_reason(result, cancellation)
         if cancelled is not None:
             LOG.info(

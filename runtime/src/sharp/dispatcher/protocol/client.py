@@ -243,6 +243,18 @@ class SharpClient:
             json={"items": items, "worker": worker},
         )
 
+    def record_task_usage(self, records: list[dict]):
+        """P1-3 real token metering: report claude invocation usage rows.
+
+        Best-effort by design — the caller (record_task_usage_best_effort)
+        swallows failures, so metering never affects task outcomes.
+        """
+        return self._request_json(
+            "POST",
+            "/usage/record",
+            json={"records": records},
+        )
+
     def get_server_rev(self) -> dict[str, Any] | None:
         """读服务端 /health 的代码指纹（best-effort，拿不到就返回 None）。
 

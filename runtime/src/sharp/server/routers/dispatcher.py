@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from sharp.server.db import get_conn
-from sharp.server.models import DispatcherStatusEntry, DispatcherStatusUpdate
+from sharp.server.models import DispatcherStatusEntry, DispatcherStatusUpdate, TaskUsageRecords
 from sharp.server.services import utcnow
 
 router = APIRouter(tags=["dispatcher"])
@@ -78,6 +78,38 @@ def delete_dispatcher_status(dispatcher_id: str):
         )
         if cur.rowcount == 0:
             raise HTTPException(404, f"未找到 dispatcher：{dispatcher_id}")
+    return None
+
+
+@router.post("/usage/record", status_code=204)
+def record_task_usage(body: TaskUsageRecords):
+    """P1-3 real token metering: persist dispatcher-reported claude usage rows.
+
+    Pure observability — nothing reads these rows to decide behavior, so a
+    failure here must never surface to the task layer (the dispatcher client
+    already treats the write as best-effort).
+    """
+    now = utcnow()
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_usage (
+                project_id, intent_id, worker_name, task_type, phase, model,
+                input_tokens, output_tokens, cache_read_input_tokens,
+                cache_creation_input_tokens, total_cost_usd, duration_ms,
+                outcome, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.project_id, r.intent_id, r.worker_name, r.task_type, r.phase, r.model,
+                    r.input_tokens, r.output_tokens, r.cache_read_input_tokens,
+                    r.cache_creation_input_tokens, r.total_cost_usd, r.duration_ms,
+                    r.outcome, now,
+                )
+                for r in body.records
+            ],
+        )
     return None
 
 

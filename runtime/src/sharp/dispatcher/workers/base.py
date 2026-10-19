@@ -48,6 +48,14 @@ class WorkerDriver(abc.ABC):
     def extract_response_text(self, stdout: str, stderr: str) -> str:
         return stdout
 
+    def extract_usage(self, stdout: str) -> dict | None:
+        """Best-effort extraction of usage/cost metadata from a driver run.
+
+        Default: no metadata available (None). Drivers that support metering
+        (e.g. claudecode with --output-format json) override this. Never raises.
+        """
+        return None
+
 
 class SeedSessionDriver(WorkerDriver):
     def prepare_session(self) -> str | None:

@@ -449,6 +449,28 @@ class DispatcherStatusEntry(BaseModel):
     data: dict[str, Any]
 
 
+class TaskUsageRecord(BaseModel):
+    """One claude invocation's token usage (P1-3, dispatcher-reported)."""
+
+    project_id: str = ""
+    intent_id: str = ""
+    worker_name: str = ""
+    task_type: str = ""
+    phase: str = ""
+    model: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    total_cost_usd: float = 0
+    duration_ms: int = 0
+    outcome: str = ""
+
+
+class TaskUsageRecords(BaseModel):
+    records: list[TaskUsageRecord]
+
+
 class SecretStatus(BaseModel):
     key: str
     configured: bool

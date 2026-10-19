@@ -27,6 +27,7 @@ from sharp.dispatcher.tasks.common import (
     log_payload_keys,
     preflight_mcp,
     preview,
+    record_task_usage_best_effort,
     run_healthcheck,
     run_worker_process,
     summarize_graph_yaml,
@@ -476,6 +477,17 @@ def run_reason_task(
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         total_ms = int((time.perf_counter() - task_started) * 1000)
         session = driver.extract_session(session, result.stdout, result.stderr)
+        record_task_usage_best_effort(
+            client,
+            driver,
+            worker,
+            result,
+            project_id=project.project.id,
+            intent_id="",
+            task_type="reason",
+            phase="execute",
+            duration_ms=execute_ms,
+        )
         cancelled = cancel_reason(result, cancellation)
         if cancelled is not None:
             LOG.info(

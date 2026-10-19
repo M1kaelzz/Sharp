@@ -467,6 +467,100 @@ def best_effort_release(client: SharpClient, project_id: str, intent_id: str, wo
         )
 
 
+def unpack_live_output(text: str) -> str:
+    """Live-output unwrap for metered tasks (P1-3).
+
+    With --output-format json the per-chunk stdout is a JSON envelope whose
+    model text lives in `result`; push the readable text to the live panel
+    instead of raw JSON. Non-JSON chunks (legacy text mode, error banners)
+    pass through unchanged.
+    """
+    if not text:
+        return text
+    try:
+        data = json.loads(text)
+        if isinstance(data, dict) and isinstance(data.get("result"), str):
+            return data["result"]
+    except Exception:
+        pass
+    return text
+
+
+def record_task_usage_best_effort(
+    client: SharpClient,
+    driver,
+    worker: WorkerConfig,
+    result: ProcessResult,
+    *,
+    project_id: str,
+    intent_id: str,
+    task_type: str,
+    phase: str,
+    duration_ms: int,
+) -> None:
+    """P1-3 real token metering: best-effort one-shot usage report.
+
+    Enabled per worker via env `SHARP_TOKEN_METERING=1` (default off — legacy
+    behavior, zero overhead). Any failure is logged and swallowed: metering
+    must NEVER affect the task outcome. The outcome is derived from the
+    process result itself, so the caller can record right after the process
+    returns, before the task branches on success/failure.
+    """
+    # Gate check must survive ANY worker shape (stub workers in tests, future
+    # driver changes): metering is pure observability and must never crash a
+    # task. The rest of the body is already inside try/except.
+    try:
+        worker_env = dict(getattr(worker, "env", None) or {})
+    except Exception:
+        worker_env = {}
+    if str(worker_env.get("SHARP_TOKEN_METERING", "")).strip() != "1":
+        return
+    try:
+        usage = driver.extract_usage(result.stdout)
+        if not usage:
+            return
+        u = usage.get("usage") if isinstance(usage.get("usage"), dict) else {}
+        try:
+            cost = float(usage.get("total_cost_usd", 0) or 0)
+        except (TypeError, ValueError):
+            cost = 0.0
+        record = {
+            "project_id": project_id,
+            "intent_id": intent_id,
+            "worker_name": worker.name,
+            "task_type": task_type,
+            "phase": phase,
+            "model": str(usage.get("model") or worker.env.get("ANTHROPIC_MODEL") or ""),
+            "input_tokens": int(u.get("input_tokens", 0) or 0),
+            "output_tokens": int(u.get("output_tokens", 0) or 0),
+            "cache_read_input_tokens": int(u.get("cache_read_input_tokens", 0) or 0),
+            "cache_creation_input_tokens": int(u.get("cache_creation_input_tokens", 0) or 0),
+            "total_cost_usd": cost,
+            "duration_ms": int(duration_ms),
+            "outcome": _usage_outcome(result),
+        }
+        client.record_task_usage([record])
+    except Exception as exc:
+        LOG.warning(
+            "usage record skipped project=%s intent=%s task=%s phase=%s error=%s",
+            project_id,
+            intent_id,
+            task_type,
+            phase,
+            exc,
+        )
+
+
+def _usage_outcome(result: ProcessResult) -> str:
+    if getattr(result, "cancelled", False):
+        return "cancelled"
+    if getattr(result, "timed_out", False):
+        return "timed_out"
+    if getattr(result, "returncode", 0) != 0:
+        return "failed"
+    return "success"
+
+
 # ---------------------------------------------------------------------------
 # MCP preflight (P3-2)
 # ---------------------------------------------------------------------------
