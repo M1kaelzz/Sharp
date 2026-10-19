@@ -268,6 +268,22 @@ Sharp 由三个角色组成，靠 HTTP + 共享 SQLite 协作：
 
 > ⚠️ **已知限制（曾导致卡死）**：若 agent 在 execute 阶段跑重型扫描（nuclei 全模板、sqlmap 高 level，单条十几分钟），会撞满 400s 超时被杀、产不出场景；项目停在初始态 → 无限重派 bootstrap。规避：Goal 里约束扫描量（轻量侦察优先），或调大 bootstrap 超时。详见 `MEMORY.md` 里的卡死诊断记录。
 
+#### Bootstrap 重派止损（P0-2，2026-10-19，默认关闭）
+
+上条"无限重派 bootstrap"的**自动终止机制**（取代纯人工规避）：
+
+- 开关：`runtime.bootstrap_stall_threshold`（dispatch.yaml，`0`=关闭=历史行为）。
+- 计数：dispatcher 在 `_reap_futures` 收割 bootstrap 任务结果时累计连续失败
+  （outcome ∉ {success, cancelled}），按项目隔离（`bootstrap_fail_counts` 内存态）。
+- 触发：达到阈值 → 写一次性诊断 hint（creator=`dispatcher.stall_detector`）→
+  置 `bootstrap_stalled`，暂停该项目 bootstrap 派发（`_bootstrap_dispatch_allowed`
+  在初始态分支拦截）。
+- 恢复：操作员补任意 hint（按 hint 数量变化检测，与 REASON_STALL 恢复同构）→
+  解除 stall、清零计数、恢复派发。
+- 设计要点：计数器**只在派发前检查**，不引入任何服务端状态/新 API；成功脱离初始态
+  天然清零；与 reason-stall 共用"诊断 hint + 人工介入"语义，区别于 paused 字段
+  （paused 是人工操作语义，AI 不写）。
+
 ### 3.1 高危操作人工审批闸门（Approval Gate，2026-08-27）
 
 高危/严重风险的 intent 在**执行前**由人工审批把关，AI 无法自批：

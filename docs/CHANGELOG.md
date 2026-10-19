@@ -17,6 +17,35 @@ AIGC:
 
 ---
 
+## 2026-10-19
+
+### P0-2｜Bootstrap 重派止损（默认关闭）
+
+**类别**：调度健壮性修复（消除"初始态无限重派 bootstrap"已知限制）
+
+**背景**：`docs/ARCHITECTURE.md` §3 记录过的已知限制——bootstrap 失败（重型扫描撞 400s
+超时 / 目标不可达 / Goal 过宽）后项目停留在初始态（facts 恰为 `{origin, goal}`），
+`_dispatch_initial_project` 每轮无限重派，无任何终止条件。
+
+**机制**：新增 `runtime.bootstrap_stall_threshold`（dispatch.yaml，默认 `0` = 关闭，旧行为
+逐字节不变）。当 `> 0` 时：
+
+- dispatcher 在 `_reap_futures` 收割 bootstrap 任务结果（outcome ∉ {success, cancelled}）
+  时累计连续失败次数（`bootstrap_fail_counts`，内存态，按项目隔离）；
+- 计数达到阈值 → 写一条一次性诊断 hint（creator=`dispatcher.stall_detector`，复用
+  REASON_STALL 语义）→ 置 `bootstrap_stalled` 暂停该项目的 bootstrap 派发；
+- 操作员补任意 hint 后自动恢复（`_bootstrap_dispatch_allowed` 按 hint 数量检测介入，
+  与 reason-stall 恢复同构）。
+
+**改前行为**：bootstrap 失败无计数、无提示、无限重派。
+**改后行为（启用时）**：达到阈值即诊断 + 暂停 + 人工介入恢复；**（默认关闭时）**与改前完全一致。
+**验证**：新增 `tests/test_bootstrap_stall.py`（7 用例：开关穿透、计数、阈值触发、
+hint 幂等、暂停门、人工恢复）+ 突变验证（摘除开关条件 → 禁用用例必须失败）+ 全量
+731 用例全绿 + `scripts/check_methods.py` 通过。
+**回滚**：`dispatch.yaml` 该键设 `0`（或 `git revert` 对应提交）。
+
+---
+
 ## 2026-09-17
 
 ### 安全修复（第一批）｜打包漏检 + DOMPurify 回退 + HSTS + Cookie Secure
