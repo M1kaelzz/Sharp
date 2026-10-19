@@ -110,7 +110,8 @@ runtime:
 tasks:
   bootstrap:
     timeout: 400           # 初始探索超时（秒）
-    conclude_timeout: 90   # 兜底总结超时（秒）
+    conclude_timeout: 180  # 兜底总结超时（秒）：bootstrap 与 explore 均已升到 180（90s 并发下实测被杀）
+    conclude_retry: false  # P0-3：conclude 失败后同一 session 重试一次（默认关=旧行为）
   reason:
     timeout: 300           # 推理超时（秒）
     max_intents: 4         # 每轮最多新增行动数
@@ -118,6 +119,7 @@ tasks:
     timeout: 300           # 探索超时（秒）
     conclude_timeout: 180  # 兜底总结超时（秒）：结论是唯一把一轮工作带回图里的通道，
                            # 太紧会在并发下被 timeout 杀掉、整轮白干（实测 90s 会命中）
+    conclude_retry: false  # P0-3：同 bootstrap.conclude_retry（默认关=旧行为）
 
 workers:
   claude_worker:
