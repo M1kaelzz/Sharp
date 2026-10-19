@@ -37,6 +37,7 @@ class FakeClient:
         idempotency_key=None,
         risk_level=None,
         risk_reason=None,
+        depends_on=None,
     ):
         status = self._statuses[min(self.calls, len(self._statuses) - 1)]
         self.calls += 1
