@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from sharp.dispatcher.config import DispatchConfig, MCPServerConfig, WorkerConfig
 from sharp.dispatcher.protocol.client import SharpClient
@@ -559,6 +560,62 @@ def _usage_outcome(result: ProcessResult) -> str:
     if getattr(result, "returncode", 0) != 0:
         return "failed"
     return "success"
+
+
+class EvidenceBuffer:
+    """P1-1 evidence auto-bind: accumulate a task's live output in memory.
+
+    The buffer keeps the raw live chunks the task actually produced (tool
+    output / HTTP probes). `_best_effort_create_vulns` uses it to auto-fill a
+    vulnerability's `evidence` from real observed output when the model did
+    not supply one. Bounded: when the accumulated text exceeds max_chars, the
+    oldest half is dropped. When disabled (gate off) it stores nothing.
+    """
+
+    def __init__(self, enabled: bool, max_chars: int = 65536):
+        self._enabled = enabled
+        self._max = max_chars
+        self._chunks: list[str] = []
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def feed(self, text: str) -> None:
+        if not self._enabled or not text:
+            return
+        self._chunks.append(text)
+        total = sum(len(c) for c in self._chunks)
+        if total > self._max:
+            half = len(self._chunks) // 2
+            self._chunks = self._chunks[half:]
+
+    def snapshot(self) -> str:
+        return "".join(self._chunks)
+
+
+def extract_evidence_snippet(buffer_text: str, url: str, limit: int = 600) -> str:
+    """P1-1: pull an evidence snippet from raw task output for a given URL.
+
+    Looks for lines mentioning the exact URL, then (fallback) the URL's host.
+    Returns the most recent up-to-5 matching lines, truncated to `limit`.
+    Empty when nothing matches — the caller then keeps the model-provided
+    evidence (or leaves it empty). Never guesses: no synthetic evidence.
+    """
+    if not buffer_text or not url:
+        return ""
+    try:
+        host = urlparse(url).hostname or ""
+    except Exception:
+        host = ""
+    norm = url.rstrip("/")
+    lines = [ln for ln in buffer_text.splitlines() if ln.strip()]
+    hits = [ln for ln in lines if norm in ln]
+    if not hits and host:
+        hits = [ln for ln in lines if host in ln]
+    if not hits:
+        return ""
+    return "\n".join(hits[-5:])[:limit]
 
 
 # ---------------------------------------------------------------------------

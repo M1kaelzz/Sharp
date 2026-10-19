@@ -66,6 +66,12 @@ runtime:
   # NOTE: this file is read once at dispatcher start; changing it requires a
   # restart of the dispatcher.
   prescan_enabled: false
+  # P1-1 evidence auto-bind. false = disabled (legacy behavior: a finding's
+  # `evidence` is whatever the model wrote, often blank). When true, each task
+  # buffers its live output and a finding without evidence gets it auto-filled
+  # from the observed output for that URL. Task-local only — no proxy, no
+  # TLS/JA3 impact. NOTE: read once at dispatcher start; restart to change.
+  evidence_auto_bind: false
 
 tasks:
   bootstrap:

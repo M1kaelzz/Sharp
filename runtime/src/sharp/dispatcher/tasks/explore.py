@@ -14,6 +14,7 @@ from sharp.dispatcher.runtime.heartbeat import HeartbeatLease
 from sharp.dispatcher.tasks.common import (
     ApkInjectionError,
     ConcludeWriteResult,
+    EvidenceBuffer,
     best_effort_release,
     cancel_reason,
     cleanup_graph_snapshots,
@@ -151,6 +152,15 @@ def run_explore_task(
         mcp_path = preflight_mcp(config, container_manager, container_name)
         execute_argv = inject_mcp_flags(execute.argv, mcp_path)
         execute_started = time.perf_counter()
+        # P1-1 evidence auto-bind: buffer the task's live output so a finding
+        # without evidence can be filled from observed output later.
+        evidence_buf = EvidenceBuffer(getattr(config.runtime, "evidence_auto_bind", False))
+
+        def _explore_live(text: str) -> None:
+            cleaned = unpack_live_output(text)
+            evidence_buf.feed(cleaned)
+            client.push_live_output(project.project.id, intent.id, worker.name, cleaned)
+
         first = _run_process(
             container_manager,
             container_name,
@@ -160,9 +170,7 @@ def run_explore_task(
             timeout=config.tasks.explore.timeout,
             lease=lease,
             cancellation=cancellation,
-            stdout_callback=lambda text: client.push_live_output(
-                project.project.id, intent.id, worker.name, unpack_live_output(text)
-            ),
+            stdout_callback=_explore_live,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, first.stdout, first.stderr)
@@ -232,6 +240,7 @@ def run_explore_task(
                     lease,
                     cancellation,
                     snapshot_dirs,
+                    evidence_buf,
                 )
             if kind == "rejected":
                 LOG.warning(
@@ -257,7 +266,7 @@ def run_explore_task(
             )
             _best_effort_create_vulns(
                 client, project.project.id, result.fact_id, intent.id,
-                worker.name, findings,
+                worker.name, findings, evidence_buf,
             )
             _best_effort_extract_knowledge(
                 client, project.project.id, description,
@@ -291,6 +300,7 @@ def run_explore_task(
                 lease,
                 cancellation,
                 snapshot_dirs,
+                evidence_buf,
             )
         LOG.warning(
             "explore command failed project=%s intent=%s worker=%s code=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -336,6 +346,7 @@ def _try_conclude_fallback(
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
     snapshot_dirs: list[str],
+    evidence_buffer=None,
 ) -> str:
     if not driver.supports_conclude() or not session:
         LOG.info(
@@ -524,7 +535,7 @@ def _try_conclude_fallback(
         )
         _best_effort_create_vulns(
             client, project_id, cw_result.fact_id, intent.id,
-            worker.name, findings,
+            worker.name, findings, evidence_buffer,
         )
         _best_effort_extract_knowledge(
             client, project_id, description,
@@ -722,17 +733,30 @@ def _best_effort_assess_endpoints(
 def _best_effort_create_vulns(
     client: SharpClient,
     project_id: str,
-    fact_id: str | None,
+    fact_id: str,
     intent_id: str,
     worker_name: str,
-    findings: list[dict] | None,
+    findings: list[dict],
+    evidence_buffer=None,
 ) -> None:
     """After a fact is written, create vulnerability records for any structured
     findings the worker reported.  Best-effort: failures are logged but never
-    affect the task status."""
+    affect the task status.
+
+    P1-1 evidence auto-bind: when a finding has no `evidence` and the caller
+    passed an EvidenceBuffer, the buffer's raw output is searched for the
+    finding's URL and a snippet is filled in (objective, observed evidence
+    instead of a blank field)."""
     if not findings or not fact_id:
         return
     for f in findings:
+        evidence = f.get("evidence", "")
+        if not evidence and evidence_buffer is not None:
+            from sharp.dispatcher.tasks.common import extract_evidence_snippet
+
+            evidence = extract_evidence_snippet(
+                evidence_buffer.snapshot(), f.get("url", "")
+            )
         try:
             resp = client.create_vulnerability(
                 project_id,
@@ -742,7 +766,7 @@ def _best_effort_create_vulns(
                 severity=f.get("severity", "info"),
                 url=f.get("url", ""),
                 description=f.get("description", ""),
-                evidence=f.get("evidence", ""),
+                evidence=evidence,
                 reproduction=f.get("reproduction", ""),
                 impact=f.get("impact", ""),
                 recommendation=f.get("recommendation", ""),

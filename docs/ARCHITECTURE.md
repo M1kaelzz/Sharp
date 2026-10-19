@@ -360,6 +360,17 @@ claude 调用用量从"完全不可见"到"逐次落库"的量化基座：
 - best-effort：工具缺失/超时/失败静默跳过；预扫描 outcome 恒为 success，
   绝不当 bootstrap 的门。
 
+#### 证据自动绑定通道（P1-1，2026-10-19，默认关闭）
+
+让漏洞 evidence 从"模型自述"转向"观察事实"的首版（完整 mitmproxy 流量捕获留后续）：
+
+- 缓冲：`EvidenceBuffer`（common）——任务级、有界（超限丢最旧一半），累积 execute
+  阶段的 live 输出（工具/模型实际输出文本）。
+- 绑定：`_best_effort_create_vulns` 对 `evidence` 为空的 finding，从 buffer 按 URL
+  （精确 → 同 host 回退）提取最近匹配行自动填充——客观、可观察、绝不编造。
+- 边界：**不拦截流量、不改 TLS/JA3**（直连保持）；真实流量包捕获 + 内容寻址 blob +
+  JA3 per-target 直连白名单留作后续批次。
+
 ### 3.1 高危操作人工审批闸门（Approval Gate，2026-08-27）
 
 高危/严重风险的 intent 在**执行前**由人工审批把关，AI 无法自批：

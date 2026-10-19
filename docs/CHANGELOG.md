@@ -19,6 +19,35 @@ AIGC:
 
 ## 2026-10-19
 
+### P1-1｜证据自动绑定通道（默认关闭）
+
+**类别**：证据客观化（让漏洞证据从"模型自述"转向"观察事实"，P1-1 首版）
+
+**背景**：`vulnerabilities.evidence` 完全依赖 worker/模型自报——模型没写就留空，
+"哪个请求对应哪个发现"无客观记录。完整 mitmproxy 流量捕获需镜像装 mitmdump +
+sidecar + CA 信任 + JA3 直连白名单，工程量大且无法在无 docker 环境端到端验证。
+首版收敛为**证据自动绑定通道**（零代理、零 TLS/JA3 影响，直连保持不变）。
+
+**机制**：`runtime.evidence_auto_bind`（默认 `false`=旧行为）开启时：
+
+- **任务级缓冲**：bootstrap/explore 的 execute 阶段把 live 输出累积进
+  `EvidenceBuffer`（有界，超限丢最旧一半）；
+- **自动绑定**：`_best_effort_create_vulns` 遇到 `evidence` 为空的 finding 时，
+  从 buffer 里按该 finding 的 URL（精确→同 host 回退）提取最近匹配行作为
+  `evidence`——**客观、可观察、绝不编造**（无匹配保持空白）；
+- 已带 evidence 的 finding 原样保留；不开开关则与基线完全一致。
+
+**改前行为**：evidence 空则空。
+**改后行为（启用时）**：空 evidence 的 finding 从本任务真实输出自动补客观证据。
+**（默认关闭时）**与基线完全一致。
+**验证**：新增 `tests/test_evidence_bind.py`（10 用例：buffer 启停/有界/快照、
+URL 精确匹配/同 host 回退/无匹配空、auto-bind 填空/保留既有/无 buffer 旧行为/
+无 URL 匹配保持空）+ 突变验证（摘除 auto-bind 条件 → 填空用例失败）+ 全量
+796 用例全绿（786+10）+ check_methods/check_docs 通过。
+**回滚**：`evidence_auto_bind` 设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P1-2｜确定性预扫描层（默认关闭）
 
 **类别**：Token 消耗结构性削减（把确定性工作从 LLM 手里摘出来）

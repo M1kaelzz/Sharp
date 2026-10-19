@@ -227,6 +227,12 @@ class RuntimeConfig(BaseModel):
     # its origin host (scope hard-gated) before bootstrap, seeding a fact so
     # the LLM plans from deterministic evidence instead of re-scanning.
     prescan_enabled: bool = False
+    # P1-1 evidence auto-bind (default False = disabled, legacy behavior): when
+    # True, each task buffers its live output and a finding with no `evidence`
+    # has it auto-filled from the observed output for that URL — objective
+    # evidence instead of a blank field. Pure task-local; no proxy, no TLS/JA3
+    # impact (direct connection preserved).
+    evidence_auto_bind: bool = False
 
 
 class WorkerConfig(BaseModel):

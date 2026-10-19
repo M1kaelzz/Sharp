@@ -17,6 +17,7 @@ from sharp.dispatcher.runtime.containers import ContainerManager
 from sharp.dispatcher.runtime.heartbeat import HeartbeatLease
 from sharp.dispatcher.tasks.common import (
     ApkInjectionError,
+    EvidenceBuffer,
     best_effort_release,
     cancel_reason,
     did_timeout,
@@ -134,6 +135,15 @@ def run_bootstrap_task(
         mcp_path = preflight_mcp(config, container_manager, container_name)
         execute_argv = inject_mcp_flags(execute.argv, mcp_path)
         execute_started = time.perf_counter()
+        # P1-1 evidence auto-bind: buffer the task's live output so a finding
+        # without official evidence can be filled from observed output later.
+        evidence_buf = EvidenceBuffer(getattr(config.runtime, "evidence_auto_bind", False))
+
+        def _bootstrap_live(text: str) -> None:
+            cleaned = unpack_live_output(text)
+            evidence_buf.feed(cleaned)
+            client.push_live_output(project.project.id, intent.id, worker.name, cleaned)
+
         first = run_worker_process(
             container_manager,
             container_name,
@@ -143,9 +153,7 @@ def run_bootstrap_task(
             timeout_seconds=config.tasks.bootstrap.timeout,
             lease=lease,
             cancellation=cancellation,
-            stdout_callback=lambda text: client.push_live_output(
-                project.project.id, intent.id, worker.name, unpack_live_output(text)
-            ),
+            stdout_callback=_bootstrap_live,
         )
         execute_ms = int((time.perf_counter() - execute_started) * 1000)
         session = driver.extract_session(session, first.stdout, first.stderr)
@@ -213,6 +221,7 @@ def run_bootstrap_task(
                     session,
                     lease,
                     cancellation,
+                    evidence_buf,
                 )
             if kind == "rejected":
                 LOG.warning(
@@ -240,6 +249,7 @@ def run_bootstrap_task(
                 endpoint_tests=data.get("endpoint_tests"),
                 phase_ms=execute_ms,
                 total_ms=int((time.perf_counter() - task_started) * 1000),
+                evidence_buffer=evidence_buf,
             )
         if did_timeout(first):
             LOG.warning(
@@ -264,6 +274,7 @@ def run_bootstrap_task(
                 session,
                 lease,
                 cancellation,
+                evidence_buf,
             )
         LOG.warning(
             "bootstrap command failed project=%s intent=%s worker=%s code=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -305,6 +316,7 @@ def _try_conclude_fallback(
     session: str | None,
     lease: HeartbeatLease,
     cancellation: TaskCancellation,
+    evidence_buffer=None,
 ) -> str:
     if not driver.supports_conclude() or not session:
         LOG.info(
@@ -527,7 +539,8 @@ def _try_conclude_fallback(
             from sharp.dispatcher.tasks.explore import _best_effort_create_vulns
 
             _best_effort_create_vulns(
-                client, project.project.id, concluded.fact_id, intent.id, worker.name, findings
+                client, project.project.id, concluded.fact_id, intent.id, worker.name, findings,
+                evidence_buffer,
             )
         _best_effort_upsert_baseline(
             client, project.project.id, worker.name, payload, phase="bootstrap_conclude"
@@ -581,6 +594,7 @@ def _write_bootstrap_complete_result(
     endpoint_tests: list[dict] | None = None,
     phase_ms: int,
     total_ms: int | None = None,
+    evidence_buffer=None,
 ) -> str:
     conclude = write_conclude_result_with_fact_id(
         client,
@@ -622,7 +636,8 @@ def _write_bootstrap_complete_result(
             from sharp.dispatcher.tasks.explore import _best_effort_create_vulns
 
             _best_effort_create_vulns(
-                client, project_id, conclude.fact_id, intent_id, worker_name, findings
+                client, project_id, conclude.fact_id, intent_id, worker_name, findings,
+                evidence_buffer,
             )
         except Exception as exc:
             LOG.warning(
