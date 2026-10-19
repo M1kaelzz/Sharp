@@ -51,6 +51,13 @@ tasks:
     # discards the entire round, since the conclusion is the only channel that carries
     # it back into the graph. Better to pay a longer budget than to lose a 5-7 min round.
     conclude_timeout: 180
+    # P0-3 conclude retry. false = disabled (legacy behavior: a conclude that times
+    # out or returns unparseable JSON discards the whole round even though the
+    # session is still alive in the container). When true, a failed conclude is
+    # retried once on the SAME session before giving up -- costs at most one extra
+    # conclude_timeout instead of losing a 5-7 min round. NOTE: read once at
+    # dispatcher start; changing it requires restarting the dispatcher.
+    conclude_retry: false
   reason:
     # Reason decides whether the goal is met and whether new intents should be proposed.
     timeout: 300
@@ -64,6 +71,8 @@ tasks:
     # Time budget for conclude fallback used to summarize confirmed findings from the same session.
     # Raised 90->180 for the same reason as bootstrap above (observed exit-124 kills at 90s).
     conclude_timeout: 180
+    # P0-3 conclude retry (same semantics as bootstrap.conclude_retry above).
+    conclude_retry: false
 
 container:
   # Base worker container. The dispatcher execs agent commands inside one container per project.

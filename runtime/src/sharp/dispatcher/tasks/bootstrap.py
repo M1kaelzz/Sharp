@@ -342,136 +342,182 @@ def _try_conclude_fallback(
     conclude_argv = driver.build_conclude(worker, prompt, session)
     mcp_path = preflight_mcp(config, container_manager, container_name)
     conclude_argv = inject_mcp_flags(conclude_argv, mcp_path)
-    LOG.info("starting bootstrap conclude fallback project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
-    conclude_started = time.perf_counter()
-    result = run_worker_process(
-        container_manager,
-        container_name,
-        worker,
-        conclude_argv,
-        phase="bootstrap_conclude",
-        timeout_seconds=config.tasks.bootstrap.conclude_timeout,
-        lease=lease,
-        cancellation=cancellation,
-    )
-    conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
-    cancelled = cancel_reason(result, cancellation)
-    if cancelled is not None:
+
+    # P0-3 conclude retry. A failed conclude used to discard the whole round
+    # (the conclusion is the ONLY channel that carries a 5-7 min round back
+    # into the graph), even though the session was still alive inside the
+    # container and `claude -r <session>` continuation exists. When the
+    # operator enables conclude_retry, retry once on the SAME session: the
+    # model sees its own interrupted/partial response and can correct it.
+    # Retry is skipped for cancellations and heartbeat loss (pointless).
+    attempts = 2 if config.tasks.bootstrap.conclude_retry else 1
+    for attempt in range(1, attempts + 1):
         LOG.info(
-            "bootstrap conclude cancelled project=%s intent=%s worker=%s reason=%s conclude_ms=%s",
+            "starting bootstrap conclude fallback attempt=%s/%s project=%s intent=%s worker=%s",
+            attempt,
+            attempts,
             project.project.id,
             intent.id,
             worker.name,
-            cancelled,
-            conclude_ms,
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
-        return "cancelled"
-    if lease.failure is not None:
-        best_effort_release(client, project.project.id, intent.id, worker.name)
-        return "failed"
-    if result.timed_out or result.returncode != 0:
-        LOG.warning(
-            "bootstrap conclude failed project=%s intent=%s worker=%s code=%s timed_out=%s conclude_ms=%s stdout_preview=%s stderr_preview=%s",
-            project.project.id,
-            intent.id,
-            worker.name,
-            result.returncode,
-            result.timed_out,
-            conclude_ms,
-            preview(result.stdout),
-            preview(result.stderr),
+        conclude_started = time.perf_counter()
+        result = run_worker_process(
+            container_manager,
+            container_name,
+            worker,
+            conclude_argv,
+            phase="bootstrap_conclude",
+            timeout_seconds=config.tasks.bootstrap.conclude_timeout,
+            lease=lease,
+            cancellation=cancellation,
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
-        return "failed"
-    try:
-        model_output = driver.extract_response_text(result.stdout, result.stderr)
-        payload = parse_json_output(model_output)
-        conclude_data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
-        if isinstance(conclude_data, dict) and isinstance(conclude_data.get("complete"), dict):
-            LOG.warning(
-                "bootstrap conclude returned unexpected complete payload project=%s intent=%s worker=%s complete_preview=%s",
+        conclude_ms = int((time.perf_counter() - conclude_started) * 1000)
+        cancelled = cancel_reason(result, cancellation)
+        if cancelled is not None:
+            LOG.info(
+                "bootstrap conclude cancelled attempt=%s/%s project=%s intent=%s worker=%s reason=%s conclude_ms=%s",
+                attempt,
+                attempts,
                 project.project.id,
                 intent.id,
                 worker.name,
-                preview(str(conclude_data.get("complete"))),
+                cancelled,
+                conclude_ms,
             )
-        kind, fact_description = validate_bootstrap_conclude_payload(payload)
-    except Exception as exc:
-        LOG.warning(
-            "bootstrap conclude parse failed project=%s intent=%s worker=%s error=%s conclude_ms=%s stdout_preview=%s stderr_preview=%s",
+            best_effort_release(client, project.project.id, intent.id, worker.name)
+            return "cancelled"
+        if lease.failure is not None:
+            best_effort_release(client, project.project.id, intent.id, worker.name)
+            return "failed"
+        if result.timed_out or result.returncode != 0:
+            LOG.warning(
+                "bootstrap conclude failed attempt=%s/%s project=%s intent=%s worker=%s code=%s timed_out=%s conclude_ms=%s stdout_preview=%s stderr_preview=%s",
+                attempt,
+                attempts,
+                project.project.id,
+                intent.id,
+                worker.name,
+                result.returncode,
+                result.timed_out,
+                conclude_ms,
+                preview(result.stdout),
+                preview(result.stderr),
+            )
+            if attempt < attempts:
+                LOG.warning(
+                    "bootstrap conclude attempt %s/%s failed, retrying on the same session project=%s intent=%s worker=%s",
+                    attempt,
+                    attempts,
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                )
+                continue
+            best_effort_release(client, project.project.id, intent.id, worker.name)
+            return "failed"
+        try:
+            model_output = driver.extract_response_text(result.stdout, result.stderr)
+            payload = parse_json_output(model_output)
+            conclude_data = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+            if isinstance(conclude_data, dict) and isinstance(conclude_data.get("complete"), dict):
+                LOG.warning(
+                    "bootstrap conclude returned unexpected complete payload project=%s intent=%s worker=%s complete_preview=%s",
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                    preview(str(conclude_data.get("complete"))),
+                )
+            kind, fact_description = validate_bootstrap_conclude_payload(payload)
+        except Exception as exc:
+            LOG.warning(
+                "bootstrap conclude parse failed attempt=%s/%s project=%s intent=%s worker=%s error=%s conclude_ms=%s stdout_preview=%s stderr_preview=%s",
+                attempt,
+                attempts,
+                project.project.id,
+                intent.id,
+                worker.name,
+                exc,
+                conclude_ms,
+                preview(result.stdout),
+                preview(result.stderr),
+            )
+            if attempt < attempts:
+                LOG.warning(
+                    "bootstrap conclude attempt %s/%s parse failed, retrying on the same session project=%s intent=%s worker=%s",
+                    attempt,
+                    attempts,
+                    project.project.id,
+                    intent.id,
+                    worker.name,
+                )
+                continue
+            best_effort_release(client, project.project.id, intent.id, worker.name)
+            return "failed"
+        if kind == "rejected":
+            LOG.warning(
+                "bootstrap conclude rejected project=%s intent=%s worker=%s conclude_ms=%s stdout_preview=%s",
+                project.project.id,
+                intent.id,
+                worker.name,
+                conclude_ms,
+                preview(result.stdout),
+            )
+            best_effort_release(client, project.project.id, intent.id, worker.name)
+            return "rejected"
+        # conclude 路径同样要接住 findings / 环境基线 / 产品标注 —— 否则 worker 明明报了，
+        # 却因为"这条路径没写"而丢。实测：bootstrap 跑满 400s 超时后的 conclude 回包里
+        # env_facts 与 product 都在、findings 也可能在，但旧实现只写了 fact。
+        # 懒导入与下方同一写法，避免模块循环引用。
+        from sharp.dispatcher.contracts import conclude_findings
+        from sharp.dispatcher.tasks.explore import (
+            _best_effort_assess_endpoints,
+            _best_effort_set_product,
+            _best_effort_upsert_baseline,
+        )
+
+        # 用带 fact_id 的写入口：登记漏洞必须以"本次结论产生的那条证据"为依据，
+        # 与主路径一致（写入口返回对象里带 fact_id，不必再猜）。
+        concluded = write_conclude_result_with_fact_id(
+            client,
             project.project.id,
             intent.id,
             worker.name,
-            exc,
-            conclude_ms,
-            preview(result.stdout),
-            preview(result.stderr),
+            fact_description,
+            source="bootstrap_conclude",
+            phase_ms=conclude_ms,
         )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
-        return "failed"
-    if kind == "rejected":
-        LOG.warning(
-            "bootstrap conclude rejected project=%s intent=%s worker=%s conclude_ms=%s stdout_preview=%s",
-            project.project.id,
-            intent.id,
-            worker.name,
-            conclude_ms,
-            preview(result.stdout),
-        )
-        best_effort_release(client, project.project.id, intent.id, worker.name)
-        return "rejected"
-    # conclude 路径同样要接住 findings / 环境基线 / 产品标注 —— 否则 worker 明明报了，
-    # 却因为"这条路径没写"而丢。实测：bootstrap 跑满 400s 超时后的 conclude 回包里
-    # env_facts 与 product 都在、findings 也可能在，但旧实现只写了 fact。
-    # 懒导入与下方同一写法，避免模块循环引用。
-    from sharp.dispatcher.contracts import conclude_findings
-    from sharp.dispatcher.tasks.explore import (
-        _best_effort_assess_endpoints,
-        _best_effort_set_product,
-        _best_effort_upsert_baseline,
-    )
+        if concluded.status != "success":
+            return "failed"
+        try:
+            from sharp.dispatcher.tasks.explore import _best_effort_extract_knowledge
 
-    # 用带 fact_id 的写入口：登记漏洞必须以"本次结论产生的那条证据"为依据，
-    # 与主路径一致（写入口返回对象里带 fact_id，不必再猜）。
-    concluded = write_conclude_result_with_fact_id(
-        client,
-        project.project.id,
-        intent.id,
-        worker.name,
-        fact_description,
-        source="bootstrap_conclude",
-        phase_ms=conclude_ms,
-    )
-    if concluded.status != "success":
-        return "failed"
-    try:
-        from sharp.dispatcher.tasks.explore import _best_effort_extract_knowledge
+            _best_effort_extract_knowledge(client, project.project.id, fact_description)
+        except Exception as exc:
+            LOG.warning(
+                "bootstrap conclude knowledge extract failed project=%s error=%s",
+                project.project.id,
+                exc,
+            )
+        findings = conclude_findings(payload)
+        if findings and concluded.fact_id:
+            from sharp.dispatcher.tasks.explore import _best_effort_create_vulns
 
-        _best_effort_extract_knowledge(client, project.project.id, fact_description)
-    except Exception as exc:
-        LOG.warning(
-            "bootstrap conclude knowledge extract failed project=%s error=%s",
-            project.project.id,
-            exc,
+            _best_effort_create_vulns(
+                client, project.project.id, concluded.fact_id, intent.id, worker.name, findings
+            )
+        _best_effort_upsert_baseline(
+            client, project.project.id, worker.name, payload, phase="bootstrap_conclude"
         )
-    findings = conclude_findings(payload)
-    if findings and concluded.fact_id:
-        from sharp.dispatcher.tasks.explore import _best_effort_create_vulns
-
-        _best_effort_create_vulns(
-            client, project.project.id, concluded.fact_id, intent.id, worker.name, findings
+        _best_effort_set_product(
+            client, project.project.id, worker.name, payload, phase="bootstrap_conclude"
         )
-    _best_effort_upsert_baseline(
-        client, project.project.id, worker.name, payload, phase="bootstrap_conclude"
-    )
-    _best_effort_set_product(
-        client, project.project.id, worker.name, payload, phase="bootstrap_conclude"
-    )
-    _best_effort_assess_endpoints(
-        client, project.project.id, worker.name, payload, phase="bootstrap_conclude"
-    )
-    return "success"
+        _best_effort_assess_endpoints(
+            client, project.project.id, worker.name, payload, phase="bootstrap_conclude"
+        )
+        return "success"
+    # 循环不可达（成功即返回，失败在最后一轮 return）；防御性兜底。
+    best_effort_release(client, project.project.id, intent.id, worker.name)
+    return "failed"
 
 
 def _bootstrap_prompt_replacements(project: ProjectDetail, client: SharpClient | None = None) -> dict[str, str]:

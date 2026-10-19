@@ -148,11 +148,21 @@ class ReasonTaskConfig(BaseModel):
 class ExploreTaskConfig(BaseModel):
     timeout: int = Field(gt=0)
     conclude_timeout: int = Field(gt=0)
+    # P0-3 conclude retry (default False = disabled, legacy behavior): when
+    # True, a failed conclude fallback (timeout / non-zero exit / unparseable
+    # JSON) is retried once on the SAME session before the round is discarded.
+    # The session continuation already exists (`claude -r <session>`), so a
+    # retry costs at most one extra conclude_timeout instead of losing a
+    # 5-7-minute round outright. Cancelled/heartbeat-lost never retry.
+    conclude_retry: bool = False
 
 
 class BootstrapTaskConfig(BaseModel):
     timeout: int = Field(gt=0)
     conclude_timeout: int = Field(gt=0)
+    # P0-3: same retry gate as ExploreTaskConfig.conclude_retry, applied to the
+    # bootstrap conclude fallback. Default False keeps legacy behavior.
+    conclude_retry: bool = False
 
 
 class TasksConfig(BaseModel):
