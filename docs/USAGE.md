@@ -121,6 +121,11 @@ tasks:
                            # 太紧会在并发下被 timeout 杀掉、整轮白干（实测 90s 会命中）
     conclude_retry: false  # P0-3：同 bootstrap.conclude_retry（默认关=旧行为）
 
+# P1-3 真 token 计量（默认关）：common_env 里设 SHARP_TOKEN_METERING: "1" 后，
+# 每次 claude 调用会注入 --output-format json，用量 best-effort 落 task_usage 表
+# （input/output/cache token + total_cost_usd）。需 claude CLI 支持该 flag。
+#   SHARP_TOKEN_METERING: "1"
+
 workers:
   claude_worker:
     type: claudecode

@@ -19,6 +19,43 @@ AIGC:
 
 ## 2026-10-19
 
+### P1-3｜真 token 计量（默认关闭）
+
+**类别**：可观测性基建（成本归因/优化验证/预算硬闸的量化基座）
+
+**背景**：Sharp 对每次 claude 调用消耗的 token 完全不可见——input/output/cache
+全部丢弃在 CLI 文本输出层。后果：成本不可归因（谁在烧钱靠猜）、优化无法闭环
+（9 路会话首小时烧 380 万 token 的浪费没有量化基线，砍掉后无法证明省了多少）、
+预算无硬闸（token 预算闭环缺真值）。
+
+**机制**：`common_env.SHARP_TOKEN_METERING=1`（默认关）时，claude 调用注入
+`--output-format json`，stdout 变为 JSON 外壳（模型文本在 `result` 字段，
+usage/cost 在元数据里），dispatcher 把用量 best-effort 落 `task_usage` 表：
+
+- driver：`build_execute/build_conclude` 注入 flag（放在 `--` 前）；
+  `extract_response_text` 解包 `result` 回模型文本（损坏/非 JSON 回退原样）；
+  新增 `extract_usage(stdout)` 解析 usage/total_cost_usd（拿不到返回 None）
+- server：新表 `task_usage`（14 列全带 DEFAULT，纯新增不碰存量 22 表）+
+  `POST /usage/record`（dispatcher 自报，与 /dispatcher/status 同级）
+- task 层：bootstrap/explore 的 execute 与 conclude 每次 attempt、reason 的
+  execute，共 6 个接入点，`record_task_usage_best_effort` 统一处理——
+  **开关关=零开销；开关开时任何异常也被吞掉，计量绝不影响任务结果**
+- live output：计量开启时直播推送前解壳 `result`，前端面板仍是模型文本
+- outcome 从 ProcessResult 派生（success/timed_out/failed/cancelled），
+  上报时机在任务分支判定之前，成功/失败都记一条
+
+**改前行为**：token 用量无任何记录。
+**改后行为（启用时）**：每次 claude 调用一条 `task_usage` 记录；
+**（默认关闭时）**argv 与基线逐字节一致，行为完全不变。
+**验证**：新增 `tests/test_token_metering.py`（16 用例：开关关 argv 基线相等、
+开关开注入 json、文本解包/回退、usage 解析、记录开关 no-op、记录字段正确、
+outcome 派生、坏输出静默、client 失败静默、live 解包、server 落库）+ 突变验证
+（摘除开关条件 → disabled 用例必须失败）+ 全量 755 用例全绿（739+16）+
+`scripts/check_methods.py` 通过。
+**回滚**：删 `SHARP_TOKEN_METERING`（或 `git revert` 对应提交）。
+
+---
+
 ### P0-3｜Conclude 单独重试（默认关闭）
 
 **类别**：调度健壮性修复（消除"conclude 一次失败即整轮白干"已知限制）

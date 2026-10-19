@@ -300,6 +300,24 @@ Sharp 由三个角色组成，靠 HTTP + 共享 SQLite 协作：
   决定）；**仅最终失败**才 `best_effort_release`，中间失败不释放（同一 session 还在跑）；
   任一尝试成功走既有写结论路径，findings / 漏洞登记 / 环境基线 / 产品标注一条不丢。
 
+#### 真 token 计量（P1-3，2026-10-19，默认关闭）
+
+claude 调用用量从"完全不可见"到"逐次落库"的量化基座：
+
+- 开关：`common_env.SHARP_TOKEN_METERING=1`（默认关=旧行为）。开启后每次
+  `claude -p` 注入 `--output-format json`：模型文本移到 JSON 外壳的 `result`
+  字段，usage（input/output/cache_read/cache_creation）+ `total_cost_usd`
+  （客户端估算）随壳返回。
+- 解包契约：`claudecode.extract_response_text` 负责把 `result` 取回，保证
+  **dispatcher 的"stdout=模型 JSON"解析链不被破坏**（损坏/非 JSON 回退原样）。
+- 落库：新表 `task_usage`（纯新增，14 列全带 DEFAULT）+ `POST /usage/record`；
+  `common.record_task_usage_best_effort` 统一处理 6 个接入点（bootstrap/explore
+  的 execute+conclude、reason 的 execute），**开关关=零开销，开关开=任何异常
+  静默**，outcome 从 ProcessResult 派生。
+- live output：计量开启时直播推送前解壳 `result`（`common.unpack_live_output`）。
+- 用途：成本归因（谁烧钱）、优化验证（确定性预扫描/模型分工的省 token 证明）、
+  未来预算硬闸的真值来源。**没有任何行为路径读 task_usage 做决策**——纯观测表。
+
 ### 3.1 高危操作人工审批闸门（Approval Gate，2026-08-27）
 
 高危/严重风险的 intent 在**执行前**由人工审批把关，AI 无法自批：
