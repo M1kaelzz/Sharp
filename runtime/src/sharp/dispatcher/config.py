@@ -233,6 +233,13 @@ class RuntimeConfig(BaseModel):
     # evidence instead of a blank field. Pure task-local; no proxy, no TLS/JA3
     # impact (direct connection preserved).
     evidence_auto_bind: bool = False
+    # P2 context graph-distance compression (default False = disabled, legacy
+    # behavior): when True, the graph YAML handed to reason/explore compresses
+    # facts by structural distance from the focus node (reason: goal; explore:
+    # the intent's from facts) instead of the legacy time-based truncation —
+    # the evidence chain the current round depends on stays full length while
+    # far-away facts are truncated.
+    graph_distance_context: bool = False
 
 
 class WorkerConfig(BaseModel):

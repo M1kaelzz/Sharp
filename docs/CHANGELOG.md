@@ -19,6 +19,40 @@ AIGC:
 
 ## 2026-10-19
 
+### P2｜上下文按图距离分层（默认关闭）
+
+**类别**：Token 消耗结构性削减（把上下文压缩从"时间近邻"升级为"图距离近邻"）
+
+**背景**：既有 `summarize_graph_yaml`（P2-2）是**纯时间启发式**——非 fact 超过
+20 条后，保留**最近 8 条**全文，其余截断。但"时间最新"≠"决策相关"：图 agent 真正
+依赖的是**证据链**（intent 的 `from`→`to` 有向边，终点 `goal`），而纯按时间会保留
+"最新但旁支"的 fact 全文、截断"离目标近但较早"的关键证据。压缩应从时间近邻升级为
+**图距离近邻**——从聚焦节点反向 BFS，越接近目标越该保全文。
+
+**机制**：`runtime.graph_distance_context`（默认 `false`=旧行为）开启时，交给
+reason/explore 的 graph YAML 改用新函数 `summarize_graph_yaml_by_distance`：
+
+- **图距离 BFS**：从 focus 节点反向走 intent 边（`to→from`），一跳=证据被产出的
+  上游；距离 `<= keep_hops(8)` 的 fact 保全文，更远/无路径的截断到 300 字符；
+- **focus 参数化**（本批机制核心）：reason 阶段 focus=`goal`；explore 阶段
+  focus=**当前 intent 的 `from` 来源**（该轮要基于的证据链）——不再一刀切按全局
+  goal，而是聚焦"正在工作的节点"；
+- `origin`/`goal` 恒全文；非法/非图 YAML、空 focus 原样返回（与旧函数回退一致）；
+- 3 个调用点（reason_execute、explore_execute、explore_conclude）按开关分支，
+  关=原时间截断逐字节不变。
+
+**改前行为**：非 fact 按"时间最近 8 条"保全文，其余截断。
+**改后行为（启用时）**：按"离当前 focus 的图距离"保全文，主证据链不丢、旁支截断。
+**（默认关闭时）**与基线完全一致。
+**验证**：新增 `tests/test_graph_distance_context.py`（10 用例：距 focus 远近截断、
+explore focus=from 链、origin/goal 恒全文、低于 hops 全保留、短文不截断、非法
+YAML/非图/空 focus 原样、无路径节点截断、多 focus 并集）+ 突变验证（摘除
+`dist > keep_hops` 条件 → 4 远节点用例失败）+ 全量 806 用例全绿（796+10）+
+check_methods/check_docs 通过。
+**回滚**：`graph_distance_context` 设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P1-1｜证据自动绑定通道（默认关闭）
 
 **类别**：证据客观化（让漏洞证据从"模型自述"转向"观察事实"，P1-1 首版）

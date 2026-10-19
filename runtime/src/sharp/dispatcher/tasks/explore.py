@@ -29,6 +29,7 @@ from sharp.dispatcher.tasks.common import (
     run_healthcheck,
     run_worker_process,
     summarize_graph_yaml,
+    summarize_graph_yaml_by_distance,
     unpack_live_output,
     write_conclude_result_with_fact_id,
     write_graph_snapshot,
@@ -128,7 +129,11 @@ def run_explore_task(
         snapshot = write_graph_snapshot(
             container_manager,
             container_name,
-            summarize_graph_yaml(export_yaml.strip()),
+            (
+                summarize_graph_yaml_by_distance(export_yaml.strip(), focus_ids=intent.from_)
+                if config.runtime.graph_distance_context
+                else summarize_graph_yaml(export_yaml.strip())
+            ),
             phase="explore_execute",
         )
         snapshot_dirs.append(snapshot.directory)
@@ -388,7 +393,11 @@ def _try_conclude_fallback(
     snapshot = write_graph_snapshot(
         container_manager,
         container_name,
-        summarize_graph_yaml(export_yaml.strip()),
+        (
+            summarize_graph_yaml_by_distance(export_yaml.strip(), focus_ids=intent.from_)
+            if config.runtime.graph_distance_context
+            else summarize_graph_yaml(export_yaml.strip())
+        ),
         phase="explore_conclude",
     )
     snapshot_dirs.append(snapshot.directory)

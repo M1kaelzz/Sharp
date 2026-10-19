@@ -31,6 +31,7 @@ from sharp.dispatcher.tasks.common import (
     run_healthcheck,
     run_worker_process,
     summarize_graph_yaml,
+    summarize_graph_yaml_by_distance,
     write_graph_snapshot,
 )
 from sharp.dispatcher.workers.registry import get_driver
@@ -474,7 +475,11 @@ def run_reason_task(
         snapshot = write_graph_snapshot(
             container_manager,
             container_name,
-            summarize_graph_yaml(export_yaml.strip()),
+            (
+                summarize_graph_yaml_by_distance(export_yaml.strip(), focus_ids=("goal",))
+                if config.runtime.graph_distance_context
+                else summarize_graph_yaml(export_yaml.strip())
+            ),
             phase="reason_execute",
         )
         snapshot_dirs.append(snapshot.directory)

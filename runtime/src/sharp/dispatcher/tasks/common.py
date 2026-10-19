@@ -80,6 +80,103 @@ def summarize_graph_yaml(
     return yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
+def summarize_graph_yaml_by_distance(
+    graph_yaml: str,
+    *,
+    focus_ids: list[str] | tuple[str, ...] = ("goal",),
+    keep_hops: int = GRAPH_SUMMARY_KEEP_RECENT,
+    truncate_chars: int = GRAPH_SUMMARY_TRUNCATE_CHARS,
+) -> str:
+    """Compress fact descriptions by their graph distance from the focus node.
+
+    Unlike the time-based :func:`summarize_graph_yaml` (which keeps the most
+    recent facts), this compresses by structural distance in the evidence graph:
+    facts close to the *focus* node (the node the agent is actively working on)
+    are kept at full length, while facts far from it are truncated. The intent
+    is to preserve the evidence chain the current round depends on, not merely
+    the newest facts.
+
+    - ``origin`` / ``goal`` facts are always kept at full length.
+    - ``focus_ids`` names the node(s) the distance is measured from. For a
+      reason round this is the project ``goal``; for an explore round it is the
+      current intent's ``from`` fact ids (the evidence it is built on).
+    - Distance is measured by walking intents backwards: a fact reachable by one
+      intent edge from a focus node is distance 1, etc. Facts at distance
+      ``<= keep_hops`` are kept full length; farther facts are truncated to
+      ``truncate_chars`` with a ``[truncated]`` marker.
+    - Facts with no path to the focus node (or whose distance exceeds
+      ``keep_hops``) are truncated.
+    - If the YAML cannot be parsed, the original string is returned unchanged.
+
+    The fallback output for an unparseable/unrecognizable graph is identical to
+    :func:`summarize_graph_yaml` (return the input unchanged), so the feature
+    degrades gracefully when the graph shape is unexpected.
+    """
+    import yaml
+
+    try:
+        data = yaml.safe_load(graph_yaml)
+    except yaml.YAMLError:
+        return graph_yaml
+
+    if not isinstance(data, dict):
+        return graph_yaml
+
+    facts: list = data.get("facts")
+    intents: list = data.get("intents")
+    if not isinstance(facts, list) or not isinstance(intents, list):
+        return graph_yaml
+
+    # Build the reverse graph: produced_fact -> [source facts via an intent].
+    # An intent maps its "from" facts to its "to" fact, so walking an intent
+    # backwards (to -> from) moves one hop away from the produced fact.
+    by_target: dict[str, list[str]] = {}
+    for intent in intents:
+        if not isinstance(intent, dict):
+            continue
+        to_fact = intent.get("to")
+        from_facts = intent.get("from")
+        if not isinstance(to_fact, str) or not isinstance(from_facts, list):
+            continue
+        by_target.setdefault(to_fact, []).extend(
+            s for s in from_facts if isinstance(s, str)
+        )
+
+    focus = set(f for f in focus_ids if isinstance(f, str) and f)
+    if not focus:
+        return graph_yaml
+
+    # BFS distances from the focus nodes over the reverse graph.
+    distances: dict[str, int] = {f: 0 for f in focus}
+    frontier = list(focus)
+    current_dist = 0
+    seen = set(focus)
+    while frontier:
+        current_dist += 1
+        next_frontier: list[str] = []
+        for node in frontier:
+            for source in by_target.get(node, []):
+                if source in seen:
+                    continue
+                seen.add(source)
+                distances[source] = current_dist
+                next_frontier.append(source)
+        frontier = next_frontier
+
+    special_ids = {"origin", "goal"}
+    for f in facts:
+        if not isinstance(f, dict) or f.get("id") in special_ids:
+            continue
+        fid = f.get("id")
+        dist = distances.get(fid, float("inf"))
+        if dist > keep_hops:
+            desc = f.get("description", "")
+            if isinstance(desc, str) and len(desc) > truncate_chars:
+                f["description"] = desc[:truncate_chars].rstrip() + " [truncated]"
+
+    return yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
 class ApkInjectionError(RuntimeError):
     """Raised when a project's APK target cannot be placed into the container.
     The task layer turns this into a task failure with a written reason, so the

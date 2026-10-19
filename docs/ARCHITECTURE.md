@@ -465,6 +465,18 @@ AI worker (explore.md prompt)
 - 回退：YAML 无法解析或 fact 数不足时原样返回
 - prompt 中加说明：截断标记保留描述前段足够理解相关性，引用截断 fact 用 ID
 
+##### 图距离分层（P2，`runtime.graph_distance_context`，默认关）
+
+时间摘要保留"最新"fact"，但"最新"≠"最相关"。`summarize_graph_yaml_by_distance()`
+按**结构图的图距离**压缩——从 focus 节点反向走 intent 边（`to→from`）做 BFS，
+一跳=证据被产出的上游；距离 `<= keep_hops(8)` 的 fact 保全文，更远/无路径截断。
+
+- **focus 参数化**：reason 阶段 focus=`goal`；explore 阶段 focus=当前 intent
+  的 `from` 来源（该轮正在执行的证据链）——聚焦"正在工作的节点"而非全局 goal；
+- `origin`/`goal` 恒全文；非法/非图 YAML、空 focus 原样返回（与时间摘要回退一致）；
+- 3 调用点（reason_execute / explore_execute / explore_conclude）按开关分支，
+  关=原时间截断逐字节不变；开=图距离截断。
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线
