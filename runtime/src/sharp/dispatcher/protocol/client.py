@@ -255,6 +255,36 @@ class SharpClient:
             json={"records": records},
         )
 
+    def record_task_traces(self, records: list[dict]):
+        """P1-4 worker process-level exchange: report dispatched task rounds.
+
+        Best-effort by design — a failed archive write must never affect the
+        dispatch loop.
+        """
+        return self._request_json(
+            "POST",
+            "/traces",
+            json={"records": records},
+        )
+
+    def fetch_task_traces(self, project_id: str, limit: int = 5) -> list[dict]:
+        """Recent task traces for a project (P1-4, reason prompt injection).
+
+        Best-effort: [] on failure.
+        """
+        try:
+            response = self._session().get(
+                self._url(f"/projects/{project_id}/traces"),
+                params={"limit": limit},
+                timeout=self._timeout,
+            )
+            if not response.ok:
+                return []
+            data = response.json()
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
     def get_server_rev(self) -> dict[str, Any] | None:
         """读服务端 /health 的代码指纹（best-effort，拿不到就返回 None）。
 

@@ -896,6 +896,32 @@ class DispatcherLoop:
             return False
         return True
 
+    def _record_task_trace(self, task: RunningTask, outcome: str) -> None:
+        """P1-4 worker process-level exchange: best-effort one-shot archive.
+
+        Called from _reap_futures for every dispatched round when
+        runtime.task_trace_archive is enabled. A failed archive write must
+        never disturb the dispatch loop — swallowed and logged.
+        """
+        try:
+            record = {
+                "project_id": task.project_id,
+                "intent_id": task.intent_id or "",
+                "worker_name": task.worker_name,
+                "task_type": task.task_type,
+                "outcome": outcome,
+                "started_at": task.start_time,
+                "duration_ms": int((time.monotonic() - task.start_time) * 1000),
+            }
+            self.client.record_task_traces([record])
+        except Exception as exc:
+            LOG.warning(
+                "task trace archive failed project=%s task=%s error=%s",
+                task.project_id,
+                task.task_type,
+                exc,
+            )
+
     def _running_project_count(self, summaries: list[ProjectSummary]) -> int:
         dispatchable_ids = {
             summary.id
@@ -1151,6 +1177,10 @@ class DispatcherLoop:
             task = self.futures.pop(future)
             try:
                 outcome = future.result()
+                # P1-4: archive this round for cross-round visibility before
+                # the outcome is consumed by counters/cooldowns below.
+                if self.config.runtime.task_trace_archive:
+                    self._record_task_trace(task, outcome)
                 if outcome == "cancelled":
                     LOG.info(
                         "task cancelled project=%s task=%s worker=%s",

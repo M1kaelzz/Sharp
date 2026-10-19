@@ -239,4 +239,12 @@ When stagnation is detected, prefer fewer but higher-quality intents (1-2 bold p
 {open_intents}
 ```
 
+### Recent task traces
+```
+{traces}
+```
+The lines above are the project's recent task rounds (⚠ = failed/timed-out/unhealthy, ✓ = success, · = other). Use them as process-level signals:
+- A direction whose rounds keep failing/timing out is likely a dead end or needs a narrower scope — do not propose more intents in the same dimension; pivot or `abandon` the parked intents.
+- A repeated `unhealthy` on a worker means the provider may be misbehaving — prefer proposing work that does not depend on that worker's stack.
+
 > AI生成

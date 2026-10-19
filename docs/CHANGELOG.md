@@ -19,6 +19,38 @@ AIGC:
 
 ## 2026-10-19
 
+### P1-4｜Worker 级过程交换（默认关闭）
+
+**类别**：过程可见性（让"失败的过程"跨轮可读，ARTEX search_all_worker_traces 的第一层）
+
+**背景**：任务一轮结束后，过程信号（哪轮失败、哪个方向超时、哪个 worker 反复被拒）
+**随 session 蒸发**——图里只有确认过的 fact（结果），失败的过程无迹可寻。reason 下一轮
+规划时看不到"这个方向刚死过 3 次"→ 重复派死路方向（相当于环境基线 144 次重复问题
+的"过程层"版本）。与 ARTEX 的差距：ARTEX 有 worker 过程检索，Sharp 连逐轮审计记录
+都没有。
+
+**机制**：`runtime.task_trace_archive`（默认 `false`=旧行为）开启时：
+
+- **归档**：`_reap_futures` 收割每轮任务时 best-effort 写一条 `task_traces`
+  （project/intent/worker/task_type/outcome/started_at/duration_ms）——统一一处，
+  覆盖 bootstrap/explore/reason/report 全部任务类型，无任务层侵入；
+- **读取**：`GET /projects/{pid}/traces?limit=N`（新在前，limit 夹取 ≤20）；
+- **注入**：reason 提示词新增 `{traces}` 块（最近 5 条，⚠=失败/超时/不健康，
+  ✓=成功），并新增使用引导：方向反复失败 → 放弃/收窄或 `abandon`；worker 反复
+  unhealthy → 避免依赖其技术栈；
+- 任何归档/拉取失败静默降级（占位行），绝不扰动调度循环。
+
+**改前行为**：任务轮次无记录，失败过程跨轮不可见。
+**改后行为（启用时）**：每轮一条 trace，reason 可看到最近任务历程；
+**（默认关闭时）**与基线完全一致。
+**验证**：新增 `tests/test_task_traces.py`（9 用例：开关关不归档、开关开每轮一条、
+字段正确、归档失败静默、disabled/empty/格式化/拉取失败四态提示词块、server 往返
++ 新在前 + limit 夹取）+ 突变验证（摘除开关 → 归档用例失败）+ 全量 774 用例全绿
+（765+9）+ check_methods/check_docs 通过。
+**回滚**：`task_trace_archive` 设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P0-1｜攻击链依赖序列（默认关闭）
 
 **类别**：规划与调度能力（ARTEX todolist 保序机制的等价物）

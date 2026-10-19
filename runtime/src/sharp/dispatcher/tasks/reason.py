@@ -76,6 +76,42 @@ def _hints_block(project: ProjectDetail) -> str:
     return format_hints(hints)
 
 
+def _task_traces_block(client: SharpClient, project_id: str, enabled: bool) -> str:
+    """P1-4 worker process-level traces block for the reason prompt.
+
+    When runtime.task_trace_archive is enabled, inject the project's recent
+    task rounds (which worker ran what, with which outcome, for how long) so
+    the planner can see failed rounds / dead directions across rounds instead
+    of rediscovering them. Best-effort: any failure degrades to a hint line.
+    """
+    if not enabled:
+        return "(Task trace archive disabled.)"
+    try:
+        traces = client.fetch_task_traces(project_id, limit=5)
+    except Exception:
+        traces = []
+    if not traces:
+        return "(No task trace records yet for this project.)"
+    lines = []
+    for t in traces:
+        outcome = t.get("outcome") or ""
+        worker = t.get("worker_name") or ""
+        task_type = t.get("task_type") or ""
+        intent_id = t.get("intent_id") or ""
+        duration_ms = int(t.get("duration_ms") or 0)
+        if outcome in ("failed", "timed_out", "unhealthy"):
+            marker = "⚠"
+        elif outcome == "success":
+            marker = "✓"
+        else:
+            marker = "·"
+        lines.append(
+            f"- {marker} {task_type} outcome={outcome} worker={worker} "
+            f"intent={intent_id} duration_ms={duration_ms}"
+        )
+    return "\n".join(lines)
+
+
 def _knowledge_block(client: SharpClient, project_id: str) -> str:
     """跨项目知识（同目标 + 同产品）。
 
@@ -457,6 +493,9 @@ def run_reason_task(
                 "knowledge": _knowledge_block(client, project.project.id),
                 "asset_ledger": _asset_ledger_block(client, project.project.id),
                 "hints": _hints_block(project),
+                "traces": _task_traces_block(
+                    client, project.project.id, config.runtime.task_trace_archive
+                ),
             },
         )
 

@@ -216,6 +216,12 @@ class RuntimeConfig(BaseModel):
     # present in the project is NOT dispatched (the chain step waits for its
     # predecessor's evidence). Intent without depends_on always passes.
     intent_dependency_gate: bool = False
+    # P1-4 worker process-level exchange (default False = disabled, legacy
+    # behavior): when True, the dispatcher archives one task_traces row per
+    # dispatched round at reap time and reason injects the project's recent
+    # traces into its prompt — failed rounds / dead directions become visible
+    # across rounds instead of evaporating with the session.
+    task_trace_archive: bool = False
 
 
 class WorkerConfig(BaseModel):

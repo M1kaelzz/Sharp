@@ -11,7 +11,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from sharp.server.db import get_conn
-from sharp.server.models import DispatcherStatusEntry, DispatcherStatusUpdate, TaskUsageRecords
+from sharp.server.models import (
+    DispatcherStatusEntry,
+    DispatcherStatusUpdate,
+    TaskTraceRecord,
+    TaskTraceRecords,
+    TaskUsageRecords,
+)
 from sharp.server.services import utcnow
 
 router = APIRouter(tags=["dispatcher"])
@@ -111,6 +117,62 @@ def record_task_usage(body: TaskUsageRecords):
             ],
         )
     return None
+
+
+@router.post("/traces", status_code=204)
+def record_task_traces(body: TaskTraceRecords):
+    """P1-4 worker process-level exchange: persist dispatched task round rows.
+
+    Written by the dispatcher at reap time (one row per task round). Reason
+    reads them back per project to see failed rounds / dead directions across
+    rounds. Pure observability — nothing else reads these rows.
+    """
+    now = utcnow()
+    with get_conn() as conn:
+        conn.executemany(
+            """
+            INSERT INTO task_traces (
+                project_id, intent_id, worker_name, task_type, outcome,
+                started_at, duration_ms, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    r.project_id, r.intent_id, r.worker_name, r.task_type, r.outcome,
+                    r.started_at, r.duration_ms, now,
+                )
+                for r in body.records
+            ],
+        )
+    return None
+
+
+@router.get("/projects/{project_id}/traces", response_model=list[TaskTraceRecord])
+def list_task_traces(project_id: str, limit: int = 5):
+    """Recent task traces for a project, newest first (P1-4, reason reads this).
+
+    `limit` is clamped to keep prompt injections bounded (default 5, max 20).
+    """
+    limit = max(1, min(limit, 20))
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT project_id, intent_id, worker_name, task_type, outcome, "
+            "started_at, duration_ms FROM task_traces "
+            "WHERE project_id = ? ORDER BY id DESC LIMIT ?",
+            (project_id, limit),
+        ).fetchall()
+        return [
+            TaskTraceRecord(
+                project_id=row["project_id"],
+                intent_id=row["intent_id"],
+                worker_name=row["worker_name"],
+                task_type=row["task_type"],
+                outcome=row["outcome"],
+                started_at=row["started_at"],
+                duration_ms=row["duration_ms"],
+            )
+            for row in rows
+        ]
 
 
 def _load_status_data(raw: str) -> dict[str, Any]:

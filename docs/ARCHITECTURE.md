@@ -332,6 +332,19 @@ claude 调用用量从"完全不可见"到"逐次落库"的量化基座：
 - 死锁兜底：reason 提示词停滞信号 5——看到被阻塞的链条步骤，优先提出"产出前置证据"
   的意图；前置方向死路则 `abandon`。老意图不受影响（无字段 = 无依赖）。
 
+#### Worker 级过程交换（P1-4，2026-10-19，默认关闭）
+
+让"失败的过程"回到可读的 ARTEX search_all_worker_traces 的第一层近似（轮次元数据化）：
+
+- 归档：`runtime.task_trace_archive`（默认 `false`=旧行为）开启时，`_reap_futures`
+  收割每轮任务时 best-effort 写一条 `task_traces`（project/intent/worker/task_type/
+  outcome/started_at/duration_ms）——统一一处，覆盖全部任务类型，失败静默降级。
+- 读取：`GET /projects/{pid}/traces?limit=N`（新在前，夹取 ≤20）；reason 每轮拉
+  最近 5 条注入 `{traces}` 提示词块（⚠=失败/超时/不健康，✓=成功），引导：方向反复
+  失败 → 收窄/放弃/abandon；worker 反复 unhealthy → 避免依赖其技术栈。
+- 边界：本批做**轮次元数据**（谁跑了、多久、什么结果）；worker 内部步骤全文检索
+  （ARTEX 的 FTS 级 search_traces）留作后续。
+
 ### 3.1 高危操作人工审批闸门（Approval Gate，2026-08-27）
 
 高危/严重风险的 intent 在**执行前**由人工审批把关，AI 无法自批：

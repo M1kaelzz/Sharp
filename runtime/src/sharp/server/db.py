@@ -374,6 +374,26 @@ CREATE TABLE IF NOT EXISTS task_usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_usage_project ON task_usage(project_id, created_at);
+
+-- P1-4 worker process-level exchange: one row per dispatched task round
+-- (bootstrap/explore/reason/report), written best-effort by the dispatcher at
+-- reap time when runtime.task_trace_archive is enabled. Reason reads the
+-- recent traces of its project and injects them into its prompt, so failed
+-- rounds / dead directions / repeated timeouts are visible across rounds
+-- instead of evaporating with the session.
+CREATE TABLE IF NOT EXISTS task_traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL DEFAULT '',
+    intent_id TEXT NOT NULL DEFAULT '',
+    worker_name TEXT NOT NULL DEFAULT '',
+    task_type TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL DEFAULT '',
+    started_at REAL NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_traces_project ON task_traces(project_id, id);
 """
 
 

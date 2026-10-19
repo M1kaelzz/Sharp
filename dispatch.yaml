@@ -50,6 +50,13 @@ runtime:
   # NOTE: this file is read once at dispatcher start; changing it requires
   # restarting the dispatcher.
   intent_dependency_gate: false
+  # P1-4 worker process-level exchange. false = disabled (legacy behavior:
+  # task rounds leave no trace; reason cannot see past failures). When true,
+  # the dispatcher archives one task_traces row per round at reap time and
+  # reason injects the recent traces into its prompt — dead directions and
+  # repeated timeouts become visible across rounds. NOTE: this file is read
+  # once at dispatcher start; changing it requires restarting the dispatcher.
+  task_trace_archive: false
 
 tasks:
   bootstrap:

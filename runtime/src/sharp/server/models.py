@@ -480,6 +480,22 @@ class TaskUsageRecords(BaseModel):
     records: list[TaskUsageRecord]
 
 
+class TaskTraceRecord(BaseModel):
+    """One dispatched task round (P1-4, dispatcher-reported at reap time)."""
+
+    project_id: str = ""
+    intent_id: str = ""
+    worker_name: str = ""
+    task_type: str = ""
+    outcome: str = ""
+    started_at: float = 0
+    duration_ms: int = 0
+
+
+class TaskTraceRecords(BaseModel):
+    records: list[TaskTraceRecord]
+
+
 class SecretStatus(BaseModel):
     key: str
     configured: bool
