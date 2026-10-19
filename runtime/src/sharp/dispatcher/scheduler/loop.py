@@ -20,6 +20,7 @@ from sharp.dispatcher.scheduler.provider_health import suspension_for_outcome
 from sharp.dispatcher.scheduler.worker_select import choose_worker
 from sharp.dispatcher.tasks.bootstrap import run_bootstrap_task
 from sharp.dispatcher.tasks.explore import run_explore_task
+from sharp.dispatcher.tasks.prescan import PRESCAN_CREATOR, run_prescan_task
 from sharp.dispatcher.tasks.reason import run_reason_task
 from sharp.server.models import Intent, ProjectDetail, ProjectSummary
 from sharp.server.reports import is_engineered_report_intent_description
@@ -408,6 +409,11 @@ class DispatcherLoop:
             # _bootstrap_dispatch_allowed).
             if not self._bootstrap_dispatch_allowed(summary, project):
                 return False
+            # P1-2: deterministic prescan (httpx/nmap/katana) runs once before
+            # the LLM bootstrap, so the worker plans from tool evidence
+            # instead of re-scanning by hand.
+            if self.config.runtime.prescan_enabled and self._prescan_pending(project):
+                return self._dispatch_prescan(project)
             return self._dispatch_initial_project(project)
         running_intent_ids = self._project_running_explore_intents(summary.id)
         unclaimed_intents = [
@@ -417,6 +423,7 @@ class DispatcherLoop:
             and intent.worker is None
             and intent.id not in running_intent_ids
             and not self._is_bootstrap_intent(intent)
+            and intent.creator != PRESCAN_CREATOR  # prescan intents are dispatcher-owned, never explore-claimed
             and intent.approval_status != "pending"  # pending must never be dispatched
             and not intent.abandoned_at  # planner retired it (batch A)
             and self._intent_dependencies_satisfied(project, intent)
@@ -471,6 +478,48 @@ class DispatcherLoop:
             )
             return False
         return self._dispatch_reason(project, reason_trigger)
+
+    def _prescan_pending(self, project: ProjectDetail) -> bool:
+        """P1-2: prescan has not run yet for this project (no prescan intent)."""
+        return not any(intent.creator == PRESCAN_CREATOR for intent in project.intents)
+
+    def _dispatch_prescan(self, project: ProjectDetail) -> bool:
+        """P1-2: run the deterministic prescan once before the LLM bootstrap.
+
+        Best-effort by design — a container or submit failure just returns
+        False and the project falls through to a normal bootstrap dispatch.
+        The prescan task itself always reports success (its outcome must not
+        gate bootstrap).
+        """
+        project_id = project.project.id
+        try:
+            container_name = self.container_manager.ensure_running(project_id)
+        except Exception:
+            LOG.warning("prescan container ensure failed project=%s", project_id)
+            return False
+        try:
+            future = self.executor.submit(
+                run_prescan_task,
+                self.config,
+                self.client,
+                self.container_manager,
+                container_name,
+                project,
+            )
+        except Exception:
+            LOG.exception("failed to submit prescan task project=%s", project_id)
+            return False
+        self.futures[future] = RunningTask(
+            project_id,
+            "prescan",
+            PRESCAN_CREATOR,
+            TaskCancellation(),
+            start_time=time.monotonic(),
+            intent_id=None,
+        )
+        self.runtime_project_ids.add(project_id)
+        LOG.info("prescan dispatched project=%s", project_id)
+        return True
 
     def _dispatch_initial_project(self, project: ProjectDetail) -> bool:
         intent = self._get_bootstrap_intent(project)

@@ -19,6 +19,40 @@ AIGC:
 
 ## 2026-10-19
 
+### P1-2｜确定性预扫描层（默认关闭）
+
+**类别**：Token 消耗结构性削减（把确定性工作从 LLM 手里摘出来）
+
+**背景**：bootstrap 的 worker（LLM）要亲手做 HTTP 探测/端口发现/URL 枚举——
+首小时烧数百万 token 的重灾区。这些是**确定性工作**：工具几秒出结果且免费。
+但 Sharp 无机器可读目标、无预扫描、无 seed 通道 → LLM 只能自己扫。
+
+**机制**：`runtime.prescan_enabled`（默认 `false`=旧行为）开启时，初始态项目在
+bootstrap 前跑一次确定性预扫描（httpx / nmap / katana）：
+
+- **授权范围硬校验**：目标 host 仅取自项目 origin 的 URL 解析；只允许主机名/
+  IPv4；拒绝 CIDR、通配符、shell 元字符、端口、IPv6——任何非法输入 → 整个预扫描
+  跳过（记日志，不阻塞 bootstrap）；**无子域枚举、无 CIDR 扩展**；
+- **工具执行**（容器内，各自超时 30/60/30s、输出截断 8KB）：httpx（状态/标题/
+  技术指纹）、nmap（`--top-ports 100` 单 host）、katana（`-d 1` 单域，**站外
+  URL 过滤后入库**）；工具缺失/超时/失败 → 跳过该项；
+- **fact 写入**：走既有 intent+conclude 通道（`creator="dispatcher.prescan"`，
+  worker=None），不新增直连写口；全部工具无输出 → 写"未发现有效信息"兜底 fact
+  （防孤儿 intent 悬挂）；prescan intent 被 explore 认领排除；
+- 完成后下轮正常派 bootstrap——worker 直接基于预扫描 fact 规划。
+
+**改前行为**：指纹/端口/路径发现全由 LLM 在 bootstrap 里做（token 大头）。
+**改后行为（启用时）**：确定性工具先扫（≤120s），seed fact 进图；
+**（默认关闭时）**与基线完全一致。
+**验证**：新增 `tests/test_prescan.py`（12 用例：host 解析/拒绝集、范围硬门、
+工具执行+fact 组装、katana 站外过滤、全工具失败兜底 fact、非法 scope 跳过、
+nmap 超时跳过、prescan intent 不重复、派发接线、prescan intent 不被 explore
+认领）+ 突变验证（摘除 scope 校验 → invalid-scope 用例失败）+ 全量 786 用例
+全绿（774+12）+ check_methods/check_docs 通过。
+**回滚**：`prescan_enabled` 设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P1-4｜Worker 级过程交换（默认关闭）
 
 **类别**：过程可见性（让"失败的过程"跨轮可读，ARTEX search_all_worker_traces 的第一层）

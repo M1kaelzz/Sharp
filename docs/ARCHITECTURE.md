@@ -345,6 +345,21 @@ claude 调用用量从"完全不可见"到"逐次落库"的量化基座：
 - 边界：本批做**轮次元数据**（谁跑了、多久、什么结果）；worker 内部步骤全文检索
   （ARTEX 的 FTS 级 search_traces）留作后续。
 
+#### 确定性预扫描层（P1-2，2026-10-19，默认关闭）
+
+把 bootstrap 首小时的 token 大头（LLM 亲手做指纹/端口/目录）摘给确定性工具：
+
+- 开关：`runtime.prescan_enabled`（默认 `false`=旧行为）。初始态项目在 bootstrap
+  前跑一次 httpx / nmap（`--top-ports 100` 单 host）/ katana（`-d 1` 单域）。
+- **授权范围硬校验**：目标仅来自 origin URL 解析出的 host；只允许主机名/IPv4，
+  拒绝 CIDR/通配符/shell 元字符/端口/IPv6；非法输入 → 跳过预扫描不阻塞；无子域
+  枚举、无 CIDR 扩展；katana 输出按 scope host 过滤后入库。
+- fact 写入走既有 intent+conclude 通道（`creator="dispatcher.prescan"`，
+  worker=None，conclude 接受任意 worker 名）；空结果写"未发现有效信息"兜底 fact
+  防悬挂；prescan intent 从 explore unclaimed 池排除。
+- best-effort：工具缺失/超时/失败静默跳过；预扫描 outcome 恒为 success，
+  绝不当 bootstrap 的门。
+
 ### 3.1 高危操作人工审批闸门（Approval Gate，2026-08-27）
 
 高危/严重风险的 intent 在**执行前**由人工审批把关，AI 无法自批：

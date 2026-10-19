@@ -222,6 +222,11 @@ class RuntimeConfig(BaseModel):
     # traces into its prompt — failed rounds / dead directions become visible
     # across rounds instead of evaporating with the session.
     task_trace_archive: bool = False
+    # P1-2 deterministic prescan (default False = disabled, legacy behavior):
+    # when True, an initial-state project runs httpx/nmap/katana ONCE against
+    # its origin host (scope hard-gated) before bootstrap, seeding a fact so
+    # the LLM plans from deterministic evidence instead of re-scanning.
+    prescan_enabled: bool = False
 
 
 class WorkerConfig(BaseModel):
