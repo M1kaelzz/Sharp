@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 
@@ -182,7 +183,19 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
         priority=row["priority"] if "priority" in row.keys() else 0,
         abandoned_at=row["abandoned_at"] if "abandoned_at" in row.keys() else None,
         abandon_reason=row["abandon_reason"] if "abandon_reason" in row.keys() else "",
+        depends_on=_parse_depends_on(row["depends_on"]) if "depends_on" in row.keys() else [],
     )
+
+
+def _parse_depends_on(raw: str) -> list[str]:
+    """Parse the depends_on JSON column defensively: bad payloads degrade to []."""
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    return [str(x) for x in data] if isinstance(data, list) else []
 
 
 def build_intents(conn: sqlite3.Connection, project_id: str) -> list[Intent]:

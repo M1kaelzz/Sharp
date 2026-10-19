@@ -92,7 +92,7 @@ If Goal has been satisfied, return:
 If Goal has not been satisfied but new intents should be proposed, return:
 ```json
 {"accepted": true, "data": {
-  "intents": [{"from": ["f001"], "description": "...", "risk_level": "high", "risk_reason": "..."}],
+  "intents": [{"from": ["f001"], "description": "...", "risk_level": "high", "risk_reason": "...", "depends_on": ["f003"]}],
   "hypotheses": {
     "add": [{"statement": "若 <条件> 则 <可观察结果>", "premise_fact_ids": ["f001"]}],
     "update": [{"id": "h001", "status": "refuted", "note": "试过 X/Y/Z 均无回显，该路径不成立"}]
@@ -100,6 +100,15 @@ If Goal has not been satisfied but new intents should be proposed, return:
   "sub_goals": {"add": [{"title": "..."}], "update": [{"id": "sg001", "status": "done"}]}
 }}
 ```
+
+> **`depends_on` (optional, attack chains):** list of fact ids that must EXIST
+> before this intent may run. Use it ONLY when the intent is the next step of a
+> chain whose prerequisite evidence does not exist yet (e.g. "verify the SQLi
+> found in f003" — f003 is a future fact, not yet produced). The dispatcher
+> will hold such intents until the prerequisite fact lands, so you may declare
+> the whole chain at once instead of one step per round. Do NOT list facts that
+> already exist — those belong in `from`. Omit `depends_on` for intents that
+> are immediately executable.
 
 ** REQUIRED when open hypotheses exist: settle them.** If the block above shows any
 `open` / `testing` hypothesis whose verdict is now decidable from the new facts, you **must**
@@ -209,6 +218,7 @@ When reviewing the graph, actively look for these stagnation signals and respond
 2. **Shallow coverage despite deep exploration:** If many facts exist but they cluster on a single dimension (e.g., all facts are about port scan results and none about authentication, authorization, or business logic), the next intent MUST target an uncovered dimension. Refer to the business-logic coverage gate above.
 3. **Circular dependency:** If you detect that multiple intents keep probing the same fact chain without producing new facts (intent A→fact X→intent B→fact X variant→intent C→…), break the cycle by proposing an intent that attacks the problem from a different angle (e.g., from client-side analysis instead of server-side, from timing-based instead of error-based, from source code review instead of black-box testing).
 4. **Goal drift:** If the latest facts are increasingly distant from the original Goal (measured by relevance to the stated objective), explicitly call this out: propose an intent that re-anchors to Goal, or if Goal appears achievable with current facts, propose `complete` instead of new intents.
+5. **Blocked chain steps (depends_on):** If an open intent declared `depends_on` facts that still do not exist, that step is waiting on its prerequisite evidence — propose the intent(s) that would PRODUCE that evidence first (it is the missing link of the chain). If the prerequisite direction itself is a dead end, `abandon` the blocked intent instead of leaving it parked.
 
 When stagnation is detected, prefer fewer but higher-quality intents (1-2 bold pivots) over many incremental ones. A well-reasoned pivot is worth more than 5 trivial extensions of a stale direction.
 

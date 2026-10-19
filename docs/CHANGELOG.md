@@ -19,6 +19,39 @@ AIGC:
 
 ## 2026-10-19
 
+### P0-1｜攻击链依赖序列（默认关闭）
+
+**类别**：规划与调度能力（ARTEX todolist 保序机制的等价物）
+
+**背景**：多步攻击链（发现接口 → 测越权 → 提权）此前无法一次规划——reason 提链条
+意图时，`from` 被服务端强校验为"必须已存在"（`validate_facts_exist`），引用未来 fact
+的链条意图被 422 静默丢弃，链条只能每轮走一步且依赖模型记忆；即使侥幸创建，同链
+意图派发按 priority/FIFO 不分先后，B/C 可能在 A 之前被 explore 认领，worker 无前置
+证据空转。
+
+**机制**：新增意图依赖维度 `depends_on`（fact id 集合，**允许引用尚未产出的 fact**）：
+
+- **数据/API**：`intents` 表加 `depends_on` 列（JSON，默认 `''`，`_migrate` 平滑升级）；
+  `CreateIntentRequest` 可选字段；goal 不可作依赖（400）；`from` 的存在性校验**不变**
+- **创建**：reason 的 intents 项可带 `"depends_on": ["f003"]`（提示词已说明：仅当意图
+  需要前置产物但该 fact 尚不存在时声明；已存在/不需要不填=立即可执行）
+- **派发门**：`runtime.intent_dependency_gate`（默认 `false`=旧行为）开启时，dispatcher
+  的 unclaimed 筛选要求 `depends_on` ⊆ 项目 facts，否则跳过并记日志（阻塞可见）；
+  reason 提示词新增停滞信号 5：发现被阻塞的链条步骤时优先提出"补前置证据"的意图，
+  前置方向死路则 `abandon`
+- 老意图无 `depends_on` → 空列表 → 无论开关都直接放行（逐字节兼容）
+
+**改前行为**：链条意图被拒或乱序；worker 无证据空转。
+**改后行为（启用时）**：reason 可一次声明整条链；前置 fact 落地后意图自动解锁派发，
+顺序由依赖保证；**（默认关闭时）**与基线完全一致。
+**验证**：新增 `tests/test_intent_dependency.py`（10 用例：gate 关放行、gate 开无依赖
+放行/满足放行/缺失阻塞/部分缺失阻塞、创建未来 fact 依赖成功、缺省空列表、goal 依赖
+拒绝、depends_on 往返、from 存在性校验不变）+ 突变验证（摘除 gate 开关 → 关场景
+用例失败）+ 全量 765 用例全绿（755+10）+ check_methods/check_docs 通过。
+**回滚**：`intent_dependency_gate` 设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P1-3｜真 token 计量（默认关闭）
 
 **类别**：可观测性基建（成本归因/优化验证/预算硬闸的量化基座）

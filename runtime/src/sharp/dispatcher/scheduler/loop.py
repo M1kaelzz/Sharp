@@ -419,6 +419,7 @@ class DispatcherLoop:
             and not self._is_bootstrap_intent(intent)
             and intent.approval_status != "pending"  # pending must never be dispatched
             and not intent.abandoned_at  # planner retired it (batch A)
+            and self._intent_dependencies_satisfied(project, intent)
         ]
         if running_intent_ids and not unclaimed_intents:
             self._log_changed(
@@ -869,6 +870,31 @@ class DispatcherLoop:
             for task in self.futures.values()
             if task.project_id == project_id and task.task_type in ("explore", "report") and task.intent_id is not None
         }
+
+    def _intent_dependencies_satisfied(self, project: ProjectDetail, intent: Intent) -> bool:
+        """P0-1 attack-chain dependency gate (default False = legacy behavior).
+
+        When the gate is enabled, an intent whose depends_on facts are not all
+        present in the project is NOT dispatched — the chain step waits for its
+        predecessor's evidence instead of burning a worker slot guessing.
+        Intents without depends_on always pass. Missing deps are logged at
+        DEBUG for visibility (blocking is a normal state, not an error).
+        """
+        if not self.config.runtime.intent_dependency_gate:
+            return True
+        if not intent.depends_on:
+            return True
+        known = {fact.id for fact in project.facts}
+        missing = [fid for fid in intent.depends_on if fid not in known]
+        if missing:
+            LOG.debug(
+                "intent blocked by dependency project=%s intent=%s missing=%s",
+                project.project.id,
+                intent.id,
+                sorted(missing),
+            )
+            return False
+        return True
 
     def _running_project_count(self, summaries: list[ProjectSummary]) -> int:
         dispatchable_ids = {

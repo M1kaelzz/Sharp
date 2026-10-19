@@ -211,6 +211,11 @@ class RuntimeConfig(BaseModel):
     # bootstrap dispatch is paused until the operator adds a hint. This breaks
     # the documented "initial-state bootstrap re-dispatch forever" loop.
     bootstrap_stall_threshold: int = 0
+    # P0-1 attack-chain dependency gate (default False = disabled, legacy
+    # behavior): when True, an intent whose depends_on facts are not all
+    # present in the project is NOT dispatched (the chain step waits for its
+    # predecessor's evidence). Intent without depends_on always passes.
+    intent_dependency_gate: bool = False
 
 
 class WorkerConfig(BaseModel):

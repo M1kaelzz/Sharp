@@ -128,6 +128,10 @@ class Intent(BaseModel):
     priority: int = 0
     abandoned_at: str | None = None
     abandon_reason: str = ""
+    # P0-1 attack-chain dependency gate (default off): fact ids that must exist
+    # before this intent may be dispatched. May reference not-yet-produced
+    # facts (chain steps); empty = no dependency.
+    depends_on: list[str] = []
 
     model_config = {"populate_by_name": True}
 
@@ -267,6 +271,11 @@ class CreateIntentRequest(BaseModel):
     # in risk.py is the final authority; model annotation is just a hint.
     risk_level: Literal["low", "medium", "high", "critical"] | None = None
     risk_reason: str = ""
+    # P0-1 attack-chain dependency gate (default off). Unlike `from` (which the
+    # server validates to reference existing facts), depends_on MAY reference
+    # facts not yet produced: a chain step waiting on its predecessor's
+    # evidence. Empty = no dependency, dispatch as usual.
+    depends_on: list[str] = []
 
     model_config = {"populate_by_name": True}
 

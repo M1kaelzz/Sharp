@@ -399,6 +399,7 @@ class SharpClient:
         idempotency_key: str | None = None,
         risk_level: str | None = None,
         risk_reason: str | None = None,
+        depends_on: list[str] | None = None,
     ) -> ApiResult:
         payload: dict[str, Any] = {
             "from": from_ids,
@@ -413,6 +414,10 @@ class SharpClient:
             payload["risk_level"] = risk_level
         if risk_reason:
             payload["risk_reason"] = risk_reason
+        # P0-1 attack-chain dependency gate: only sent when non-empty, so the
+        # legacy request body stays byte-identical.
+        if depends_on:
+            payload["depends_on"] = depends_on
         return self._request_json(
             "POST",
             f"/projects/{project_id}/intents",

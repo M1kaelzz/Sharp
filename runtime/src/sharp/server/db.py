@@ -97,6 +97,12 @@ CREATE TABLE IF NOT EXISTS intents (
     priority INTEGER NOT NULL DEFAULT 0,
     abandoned_at TEXT,
     abandon_reason TEXT NOT NULL DEFAULT '',
+    -- P0-1 attack-chain dependency gate (default off): JSON array of fact ids
+    -- that must EXIST before this intent may be dispatched. Unlike `from`
+    -- (sources, must already exist at creation), depends_on may reference
+    -- facts not yet produced — that is exactly the "chain step waiting on its
+    -- predecessor's evidence" case. Empty = no dependency, dispatch as usual.
+    depends_on TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (id, project_id)
 );
 
@@ -398,6 +404,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             ("approval_status", "ALTER TABLE intents ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'none'"),
             ("approval_note", "ALTER TABLE intents ADD COLUMN approval_note TEXT NOT NULL DEFAULT ''"),
             ("approval_decided_at", "ALTER TABLE intents ADD COLUMN approval_decided_at TEXT"),
+            # P0-1 attack-chain dependency gate (default off, legacy behavior).
+            ("depends_on", "ALTER TABLE intents ADD COLUMN depends_on TEXT NOT NULL DEFAULT ''"),
         ):
             if not _column_exists(conn, "intents", col):
                 conn.execute(ddl)

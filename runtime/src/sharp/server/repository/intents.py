@@ -12,7 +12,8 @@ import sqlite3
 _COLUMNS = (
     "id, project_id, to_fact_id, description, creator, worker, "
     "last_heartbeat_at, created_at, concluded_at, idempotency_key, "
-    "risk_level, risk_reason, approval_status, approval_note, approval_decided_at"
+    "risk_level, risk_reason, approval_status, approval_note, approval_decided_at, "
+    "depends_on"
 )
 
 
@@ -34,9 +35,10 @@ def insert(
     approval_status: str = "none",
     approval_note: str = "",
     approval_decided_at: str | None = None,
+    depends_on: str = "",
 ) -> None:
     conn.execute(
-        f"INSERT INTO intents ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        f"INSERT INTO intents ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             intent_id,
             project_id,
@@ -53,6 +55,7 @@ def insert(
             approval_status,
             approval_note,
             approval_decided_at,
+            depends_on,
         ),
     )
 

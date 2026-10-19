@@ -1,3 +1,4 @@
+import json
 import sqlite3
 
 from fastapi import APIRouter, HTTPException
@@ -45,6 +46,9 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         check_project_active(conn, project_id)
         validate_facts_exist(conn, project_id, body.from_)
         validate_goal_not_in_sources(body.from_)
+        # P0-1: depends_on may reference not-yet-produced facts (chain steps),
+        # but the goal itself can never be a prerequisite.
+        validate_goal_not_in_sources(body.depends_on)
         validate_intent_creator_worker(body.creator, body.worker)
 
         # Idempotency fast path: a retry with the same key returns the existing
@@ -95,6 +99,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
                 approval_status=approval_status,
                 approval_note=approval_note,
                 approval_decided_at=approval_decided_at,
+                depends_on=json.dumps(body.depends_on, ensure_ascii=False),
             )
         except sqlite3.IntegrityError:
             # Concurrent request with the same idempotency_key won the unique
@@ -143,6 +148,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
             approval_status=approval_status,
             approval_note=approval_note,
             approval_decided_at=approval_decided_at,
+            depends_on=body.depends_on,
         )
     # Bug fix: publish AFTER with-block so DB is committed before SSE fires
     publish(project_id, "intent_created", {"id": iid, "worker": body.worker})

@@ -318,6 +318,20 @@ claude 调用用量从"完全不可见"到"逐次落库"的量化基座：
 - 用途：成本归因（谁烧钱）、优化验证（确定性预扫描/模型分工的省 token 证明）、
   未来预算硬闸的真值来源。**没有任何行为路径读 task_usage 做决策**——纯观测表。
 
+#### 攻击链依赖序列（P0-1，2026-10-19，默认关闭）
+
+多步攻击链的**声明式依赖 + 派发保序**（ARTEX todolist 的等价物）：
+
+- 字段：`intents.depends_on`（JSON 数组，fact id 集合）。与 `from` 的语义分工：
+  `from` = 来源（创建时**必须已存在**，服务端强校验不变）；`depends_on` = 执行前提
+  （**允许引用尚未产出的 fact**——链条步骤等待前置证据，这是核心差异）。
+- 创建：reason 的 intents 项可带 `depends_on`（提示词说明何时用）；goal 不可作依赖。
+- 派发门：`runtime.intent_dependency_gate`（默认 `false`=旧行为）。开启时 unclaimed
+  筛选要求 `depends_on ⊆ 项目 facts`，否则跳过（`loop._intent_dependencies_satisfied`，
+  DEBUG 日志带缺失列表）。空 depends_on 永远放行。
+- 死锁兜底：reason 提示词停滞信号 5——看到被阻塞的链条步骤，优先提出"产出前置证据"
+  的意图；前置方向死路则 `abandon`。老意图不受影响（无字段 = 无依赖）。
+
 ### 3.1 高危操作人工审批闸门（Approval Gate，2026-08-27）
 
 高危/严重风险的 intent 在**执行前**由人工审批把关，AI 无法自批：

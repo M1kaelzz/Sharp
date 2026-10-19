@@ -331,11 +331,12 @@ def _create_intent_with_retry(
     worker_name: str,
     risk_level: str | None = None,
     risk_reason: str | None = None,
+    depends_on: list[str] | None = None,
 ) -> ApiResult:
     # One stable key per logical intent, reused across retries so the server
     # deduplicates rather than creating duplicates.
     idempotency_key = uuid.uuid4().hex
-    response = client.create_intent(project_id, from_ids, description, worker_name, idempotency_key, risk_level, risk_reason)
+    response = client.create_intent(project_id, from_ids, description, worker_name, idempotency_key, risk_level, risk_reason, depends_on)
     attempt = 1
     while _is_transient_status(response.status_code) and attempt < INTENT_WRITE_MAX_ATTEMPTS:
         backoff = INTENT_WRITE_BACKOFF_SECONDS * attempt
@@ -349,7 +350,7 @@ def _create_intent_with_retry(
             backoff,
         )
         time.sleep(backoff)
-        response = client.create_intent(project_id, from_ids, description, worker_name, idempotency_key, risk_level, risk_reason)
+        response = client.create_intent(project_id, from_ids, description, worker_name, idempotency_key, risk_level, risk_reason, depends_on)
         attempt += 1
     return response
 
@@ -605,6 +606,7 @@ def run_reason_task(
                     worker.name,
                     intent_data.get("risk_level"),
                     intent_data.get("risk_reason"),
+                    intent_data.get("depends_on"),
                 )
                 if response.status_code == 403:
                     LOG.info("project became inactive during reason intent create project=%s worker=%s created=%s", project.project.id, worker.name, created)

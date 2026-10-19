@@ -43,6 +43,13 @@ runtime:
   # the operator adds a hint. NOTE: this file is read once at dispatcher start;
   # changing it requires restarting the dispatcher.
   bootstrap_stall_threshold: 0
+  # P0-1 attack-chain dependency gate. false = disabled (legacy behavior:
+  # intents dispatch regardless of their depends_on). When true, an intent
+  # whose depends_on facts are not all present is held back until its
+  # predecessor's evidence lands — reason may declare whole chains at once.
+  # NOTE: this file is read once at dispatcher start; changing it requires
+  # restarting the dispatcher.
+  intent_dependency_gate: false
 
 tasks:
   bootstrap:
