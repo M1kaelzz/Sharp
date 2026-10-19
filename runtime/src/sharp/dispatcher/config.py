@@ -195,6 +195,12 @@ class RuntimeConfig(BaseModel):
     worker_healthcheck: WorkerHealthcheckMode = "startup_only"
     execution: ExecutionMode = "container"
     prompt_group: str = Field(min_length=1)
+    # P0-2 bootstrap stall protection (default 0 = disabled, legacy behavior):
+    # when > 0, a project whose bootstrap task fails that many consecutive times
+    # (any outcome other than success/cancelled) is diagnosed with a hint and
+    # bootstrap dispatch is paused until the operator adds a hint. This breaks
+    # the documented "initial-state bootstrap re-dispatch forever" loop.
+    bootstrap_stall_threshold: int = 0
 
 
 class WorkerConfig(BaseModel):

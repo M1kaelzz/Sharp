@@ -115,6 +115,17 @@ class DispatcherLoop:
         # hint_count at the time each project was diagnosed as stalled.
         # Used to detect when the user has added a new hint (clearing the stall).
         self.reason_stalled_hint_counts: dict[str, int] = {}
+        # P0-2: consecutive failed bootstrap outcomes per project. A failed
+        # bootstrap leaves the project in its initial state (only origin/goal
+        # facts), which would otherwise re-dispatch bootstrap forever.
+        self.bootstrap_fail_counts: dict[str, int] = {}
+        # P0-2: projects whose bootstrap stall threshold has been reached.
+        # While set, bootstrap dispatch is skipped until the operator adds a
+        # hint (mirrors reason-stall semantics).
+        self.bootstrap_stalled: dict[str, bool] = {}
+        # P0-2: hint_count at the time each project was diagnosed with a
+        # bootstrap stall; used to detect operator intervention (new hint).
+        self.bootstrap_stall_hint_counts: dict[str, int] = {}
         # P2-3: tracks which projects have already received a budget-exhausted hint.
         self._budget_hint_written: set[str] = set()
         self._deadline_hint_written: set[str] = set()
@@ -392,6 +403,11 @@ class DispatcherLoop:
         if self._is_initial_project(project):
             if project.project.reason is not None:
                 return False
+            # P0-2: a bootstrap-stalled project is skipped until the operator
+            # adds a hint (which also clears the stall, see
+            # _bootstrap_dispatch_allowed).
+            if not self._bootstrap_dispatch_allowed(summary, project):
+                return False
             return self._dispatch_initial_project(project)
         running_intent_ids = self._project_running_explore_intents(summary.id)
         unclaimed_intents = [
@@ -480,6 +496,97 @@ class DispatcherLoop:
             )
             return False
         return self._dispatch_bootstrap(project, intent)
+
+    # P0-2 bootstrap stall protection -----------------------------------------
+    def _bootstrap_dispatch_allowed(self, summary: ProjectSummary, project: ProjectDetail) -> bool:
+        """P0-2: whether bootstrap may be dispatched for an initial-state project.
+
+        Returns True when the project is not in a bootstrap-stall state, or when
+        the operator has intervened since the stall was diagnosed (a new hint
+        clears the stall and resumes dispatch — mirroring reason-stall semantics).
+
+        Legacy behavior (threshold == 0) never enters the stall state, so this
+        gate is a pure pass-through: unchanged dispatch semantics.
+        """
+        project_id = project.project.id
+        if not self.bootstrap_stalled.get(project_id, False):
+            return True
+        stalled_at = self.bootstrap_stall_hint_counts.get(project_id)
+        if stalled_at is None:
+            # Stall flag set but no hint count recorded — defensive clear.
+            self.bootstrap_stalled.pop(project_id, None)
+            return True
+        # stalled_at + 1 accounts for the diagnostic hint we wrote ourselves.
+        if len(project.hints) <= stalled_at + 1:
+            self._log_changed(
+                f"project:{project_id}:skip:bootstrap_stalled",
+                logging.INFO,
+                "skip bootstrap project=%s because bootstrap stalled "
+                "fail_count=%s waiting for user hint hint_count=%s stalled_at=%s",
+                project_id,
+                self.bootstrap_fail_counts.get(project_id, 0),
+                len(project.hints),
+                stalled_at,
+            )
+            return False
+        # The operator added a hint after the stall — clear it and resume.
+        self.bootstrap_stalled.pop(project_id, None)
+        self.bootstrap_stall_hint_counts.pop(project_id, None)
+        self.bootstrap_fail_counts.pop(project_id, None)
+        self._clear_log_state(f"project:{project_id}:skip:bootstrap_stalled")
+        LOG.info(
+            "bootstrap stall cleared by user hint project=%s hint_count=%s",
+            project_id,
+            len(project.hints),
+        )
+        return True
+
+    def _bootstrap_failed(self, project_id: str) -> None:
+        """P0-2: record one consecutive bootstrap failure; diagnose + stall the
+        project once the threshold is reached. No-op when the feature is off."""
+        threshold = getattr(self.config.runtime, "bootstrap_stall_threshold", 0)
+        if threshold <= 0:
+            return
+        count = self.bootstrap_fail_counts.get(project_id, 0) + 1
+        self.bootstrap_fail_counts[project_id] = count
+        if count < threshold or self.bootstrap_stalled.get(project_id, False):
+            return
+        try:
+            project = self.client.get_project(project_id)
+        except Exception:  # best-effort: never let the reap path fail on this
+            LOG.exception("failed to fetch project for bootstrap stall project=%s", project_id)
+            return
+        if project is None:
+            return
+        LOG.warning(
+            "project bootstrap stalled consecutive_failures=%s threshold=%s project=%s "
+            "writing diagnostic hint and pausing bootstrap dispatch",
+            count,
+            threshold,
+            project_id,
+        )
+        hint_content = (
+            f"[Sharp 诊断] 引导任务已连续 {count} 次未产生任何结论。"
+            "可能原因：初始侦察撞上执行超时（400s）、目标不可达、或 Goal 描述无法直接求解。\n"
+            "请补充以下任意一项后系统将自动恢复引导：\n"
+            "• 调整目标或 Goal（拆分目标 / 约束扫描范围，如「仅轻量侦察」）\n"
+            "• 确认目标可达性与测试条件（连通性 / 端口 / 凭据）\n"
+            "• 补充已掌握的线索或指纹信息"
+        )
+        response = self.client.create_hint(project_id, hint_content, STALL_HINT_CREATOR)
+        if response.ok:
+            # Record hint_count at stall time so operator intervention (a new
+            # hint) can be detected later.
+            self.bootstrap_stalled[project_id] = True
+            self.bootstrap_stall_hint_counts[project_id] = len(project.hints)
+            self.bootstrap_fail_counts.pop(project_id, None)
+            LOG.info("bootstrap stall diagnostic hint written project=%s", project_id)
+        else:
+            LOG.warning(
+                "failed to write bootstrap stall hint project=%s status=%s",
+                project_id,
+                response.status_code,
+            )
 
     def _dispatch_reason(self, project: ProjectDetail, trigger: str) -> bool:
         selection = self._select_worker(project.project.id, "reason")
@@ -1034,6 +1141,12 @@ class DispatcherLoop:
                         outcome,
                     )
                 self._clear_project_log_state(task.project_id)
+                # P0-2: count consecutive bootstrap failures. Any outcome other
+                # than success/cancelled means the project stayed in its initial
+                # state and the next cycle would otherwise re-dispatch bootstrap
+                # indefinitely (documented "known limitation").
+                if task.task_type == "bootstrap" and outcome not in ("success", "cancelled"):
+                    self._bootstrap_failed(task.project_id)
                 suspension = suspension_for_outcome(outcome)
                 provider_kind = suspension[0] if suspension else None
                 if outcome == "unhealthy":

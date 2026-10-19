@@ -30,6 +30,13 @@ runtime:
   healthcheck_timeout: 60
   # Prompt set loaded from runtime/src/sharp/dispatcher/prompts/.
   prompt_group: "default"
+  # P0-2 bootstrap stall protection. 0 = disabled (legacy: a project whose
+  # bootstrap keeps failing stays in its initial state and is re-dispatched
+  # forever). When > 0, after that many consecutive failed bootstrap outcomes
+  # the dispatcher writes a diagnostic hint and pauses bootstrap dispatch until
+  # the operator adds a hint. NOTE: this file is read once at dispatcher start;
+  # changing it requires restarting the dispatcher.
+  bootstrap_stall_threshold: 0
 
 tasks:
   bootstrap:
