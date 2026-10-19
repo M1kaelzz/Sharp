@@ -18,6 +18,7 @@ from sharp.server.models import (
     VulnTrendPoint,
     Vulnerability,
 )
+from sharp.server.notifier import send_high_risk_alert
 from sharp.server.repository import vulnerabilities as vulns_repo
 from sharp.server.services import (
     get_project_or_404,
@@ -49,7 +50,7 @@ def list_vulns(project_id: str):
 )
 def create_vuln(project_id: str, body: CreateVulnerabilityRequest):
     with get_conn() as conn:
-        get_project_or_404(conn, project_id)
+        project = get_project_or_404(conn, project_id)
         # Verify the fact exists
         fact = conn.execute(
             "SELECT 1 FROM facts WHERE id = ? AND project_id = ?",
@@ -99,6 +100,19 @@ def create_vuln(project_id: str, body: CreateVulnerabilityRequest):
         "severity": body.severity,
         "status": status,
     })
+    # P2 high-risk IM notify: best-effort, non-blocking. Safe sanitized summary
+    # only; a webhook failure must never fail or slow the vuln creation.
+    send_high_risk_alert(
+        project_id,
+        {
+            "project_title": project["title"],
+            "title": body.title,
+            "severity": body.severity,
+            "kind": body.kind,
+            "fact_id": body.fact_id,
+            "url": body.url,
+        },
+    )
     return result
 
 

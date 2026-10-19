@@ -443,6 +443,19 @@ AI 探索中产生的每个行动都会被服务端按风险等级分类（模�
 | `SHARP_APPROVAL_BLOCK_MEDIUM` | `false` | medium 是否也拦截 |
 | `SHARP_APPROVAL_TIMEOUT_HOURS` | `24` | 待审批超时小时数（下限 1） |
 
+**高危 IM 通知**（P2，默认关）：高危（critical/high）漏洞入库时推送脱敏摘要到
+operator webhook，让高危从"拉取"变"推送"。同样是脱敏端 env 作者（worker 不可重定向/关闭）：
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `SHARP_ALERT_ENABLED` | `false` | 通知总开关；`1`/`true`/`on` 启用 |
+| `SHARP_ALERT_WEBHOOK` | 空 | 企业 HTTP URL（企微/钉钉/飞书通用纯文本格式） |
+| `SHARP_ALERT_SEVERITIES` | `critical,high` | 触发通知的严重度逗号列表 |
+
+> **脱敏保证**：通知只含项目名/id/severity/title/类型/URL 主机/fact id——**绝不携带
+> evidence/description/reproduction/impact**（可能带 token 或 markdown 注入）。发送失败
+> 仅记日志，不阻塞漏洞入库。
+
 #### 审批流程
 
 1. 侧边栏点击「审批」（带红色角标显示待审批数）进入**审批中心**；

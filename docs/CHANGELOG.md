@@ -53,6 +53,39 @@ check_methods/check_docs 通过。
 
 ---
 
+### P2｜高危 IM 通知（默认关闭）
+
+**类别**：高危发现时序可观察性（让高危从"拉取式"变"推送式"）
+
+**背景**：高危（critical/high）漏洞写入后只躺在页面和报告里，必须人工打开才能
+发现——没有推送通道，无法第一时间止损。参照 ARTEX 审计教训：通知若原样转发
+finding 文本会带来**凭据泄漏**（evidence/reproduction 常含 token）、**markdown
+注入**（IM 渲染渲染触发链接/图片技巧）、**SSRF 盲读**等风险，故通知必须是
+"脱敏摘要 + 纯文本 + 可定位"，而非原样转发。
+
+**机制**：新增 `server/notifier.py`（operator env 配置，与 risk.py 同 authority）：
+- **env 开关**：`SHARP_ALERT_ENABLED`（默认关=旧行为）、`SHARP_ALERT_WEBHOOK`、
+  `SHARP_ALERT_SEVERITIES`（默认 `critical,high`）；
+- **触发点**：`routers/vulnerabilities.py::create_vuln` 高危漏洞入库后调用
+  `send_high_risk_alert`——一处覆盖 dispatcher 的 bootstrap/explore 全部来源；
+- **脱敏摘要**：仅携带项目名/id、severity、漏洞 title、kind、URL 主机、fact id；
+  **绝不携带 evidence/description/reproduction/impact 原文**（防凭据泄漏 + 防注入）；
+- **纯文本**：payload `{"msgtype":"text","text":{"content":...}}`（企微/钉钉/飞书
+  机器人通用），渲染为文本而非 markdown；
+- **best-effort 非阻断**：未启用/未配置/非高危返回 False 不发；发送失败仅记日志、
+  绝不阻塞或失败漏洞入库（requests 有 5s 超时）。
+
+**改前行为**：无任何外发通知，高危只在页面/报告可见。
+**改后行为（启用时）**：高危漏洞入库即推脱敏纯文本摘要到 webhook。
+**（默认关闭时）**与基线完全一致。
+**验证**：新增 `tests/test_high_risk_notify.py`（11 用例：脱敏仅摘要/主机剥离查询与
+路径/非法 URL 省略主机/控制字符剥离/严重度可接收验/禁用与未配置不发送/非高危不
+发送/机器人纯文本格式/发送失败不抛出/自定义严重度集）+ 突变验证（摘除严重度
+门槛 → 2 用例失败）+ 全量 817 用例全绿（806+11）+ check_methods/check_docs 通过。
+**回滚**：`SHARP_ALERT_ENABLED` 设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P1-1｜证据自动绑定通道（默认关闭）
 
 **类别**：证据客观化（让漏洞证据从"模型自述"转向"观察事实"，P1-1 首版）

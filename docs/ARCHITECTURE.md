@@ -477,6 +477,19 @@ AI worker (explore.md prompt)
 - 3 调用点（reason_execute / explore_execute / explore_conclude）按开关分支，
   关=原时间截断逐字节不变；开=图距离截断。
 
+##### 高危 IM 通知（P2，`server/notifier.py`，env 开关默认关）
+
+高危漏洞从"拉取"（打开页面才见）变"推送"：`create_vuln` 入库高危后调
+`send_high_risk_alert` 推脱敏摘要到 operator webhook。
+
+- **env authority**：`SHARP_ALERT_ENABLED`（默认关）+ `SHARP_ALERT_WEBHOOK` +
+  `SHARP_ALERT_SEVERITIES`（默认 critical,high），读 operator 环境（与 risk.py
+  一致），worker 不可重定向/关闭；
+- **脱敏**：只含项目名/id、severity、title、kind、URL 主机、fact id——evidence/
+  description/reproduction/impact 永不进 payload（防凭据泄漏 + markdown 注入）；
+- **纯文本**：`{"msgtype":"text","text":{"content":...}}`（企微/钉钉/飞书通用）；
+- **best-effort**：禁用/未配置/非高危不发送；发送失败仅记日志，永不阻塞漏洞入库。
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线
