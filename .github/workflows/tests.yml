@@ -1,0 +1,45 @@
+name: Tests
+
+# Runs the pytest suite on every push / PR touching the runtime.
+# Mirrors the canonical local command documented in runtime/pyproject.toml:
+#     uv run --project runtime --with pytest --with httpx pytest
+# pytest/httpx are intentionally NOT locked deps (they would pollute the
+# runtime venv on every `./sharp` launch), so we pull them ephemerally with --with.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "runtime/**"
+      - "scripts/**"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    paths:
+      - "runtime/**"
+      - "scripts/**"
+      - ".github/workflows/tests.yml"
+  workflow_dispatch: {}
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync runtime deps (locked)
+        run: uv sync --project runtime --locked
+
+      - name: Run test suite
+        run: uv run --project runtime --with pytest --with httpx pytest -q
+
+      - name: Frontend method completeness check
+        run: python3 scripts/check_methods.py
+
+      # 文档一致性（P2-B）：章节编号/§ 引用/模块树里的方法数声明。
+      # 放进 CI 的理由与上一条相同 —— 这类漂移肉眼很难发现，靠约定记不住。
+      - name: Documentation consistency check
+        run: python3 scripts/check_docs.py

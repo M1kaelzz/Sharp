@@ -1,0 +1,566 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+import platform
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+import webbrowser
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+PROJECT = ROOT / "runtime"
+IS_WINDOWS = os.name == "nt"
+DEFAULT_CONFIG = ROOT / "dispatch.yaml"
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8000
+DEFAULT_TITLE = "Sharp"
+LAUNCHER_VERSION = "2026-07-06-worker-pull-v2"
+SECRET_KEYS = ("SHARP_ANTHROPIC_AUTH_TOKEN",)
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args and args[0] in {"-h", "--help"}:
+        print_usage()
+        return 0
+    if args and args[0] in {"-V", "--version", "version"}:
+        print(f"Sharp launcher {LAUNCHER_VERSION}")
+        return 0
+    if args and args[0] == "doctor":
+        print_doctor()
+        return 0
+    if not args:
+        return run_app([])
+
+    command, rest = args[0], args[1:]
+    if command in {"app", "desktop", "window"}:
+        return run_app(rest)
+    if command == "web":
+        return run_web(rest)
+    if command == "help":
+        print_usage()
+        return 0
+    return run_raw_cli(args)
+
+
+def print_usage() -> None:
+    print(
+        """Sharp launcher
+
+Usage:
+  ./sharp                 Start the desktop app and dispatcher
+  ./sharp app             Start the desktop app and dispatcher
+  ./sharp web             Start the browser web UI and dispatcher
+  ./sharp web --no-open   Start web UI without opening a browser
+  ./sharp web --no-dispatch
+                           Start web/API only for initial configuration
+  ./sharp doctor          Print local environment and package diagnostics
+  ./sharp --version       Print launcher version
+  ./sharp serve ...       Run the underlying Sharp CLI command
+  ./sharp dispatch ...    Run the underlying Sharp CLI command
+
+Secrets:
+  Copy secrets.env.example to datas/sharp/secrets.env, fill the token,
+  then start Sharp. The path is tool-local and can move with this folder.
+""".rstrip()
+    )
+
+
+def find_uv() -> str:
+    explicit = os.environ.get("UV_BIN")
+    candidates = [
+        explicit,
+        shutil.which("uv"),
+        str(Path.home() / ".local" / "bin" / "uv"),
+        "/opt/homebrew/bin/uv",
+        "/usr/local/bin/uv",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    raise SystemExit("uv not found. Set UV_BIN or install uv so it is available in PATH.")
+
+
+def uv_cmd(*parts: str) -> list[str]:
+    return [find_uv(), *parts]
+
+
+def project_args() -> list[str]:
+    return ["--project", str(PROJECT)]
+
+
+def sync_project(*, desktop: bool) -> None:
+    cmd = uv_cmd("sync", *project_args())
+    if desktop:
+        cmd.extend(["--extra", "desktop"])
+    cmd.append("--locked")
+    run_checked(cmd)
+
+
+def run_raw_cli(args: list[str]) -> int:
+    return subprocess.call(uv_cmd("run", *project_args(), "sharp", *args), cwd=ROOT)
+
+
+def run_checked(cmd: list[str]) -> None:
+    """Run a subprocess and fail with a clean, actionable message.
+
+    ``subprocess.run(check=True)`` alone would surface a raw CalledProcessError
+    traceback to the user; convert to a friendly SystemExit instead (the
+    launcher entry point is ``raise SystemExit(main())``, so this prints the
+    message without a traceback)."""
+    try:
+        subprocess.run(cmd, cwd=ROOT, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(
+            f"command failed (exit {exc.returncode}): {' '.join(cmd)}\n"
+            "Fix the error above, or run `./sharp doctor` for environment diagnostics."
+        ) from exc
+    except FileNotFoundError as exc:
+        raise SystemExit(f"command not found: {cmd[0]}\nInstall it and retry.") from exc
+
+
+def config_path() -> Path:
+    return Path(os.environ.get("SHARP_DISPATCH_CONFIG", str(DEFAULT_CONFIG))).expanduser().resolve()
+
+
+def secrets_path() -> Path:
+    configured = os.environ.get("SHARP_SECRETS_FILE")
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.is_absolute() else ROOT / path
+    return ROOT / "datas" / "sharp" / "secrets.env"
+
+
+def read_secrets() -> dict[str, str]:
+    path = secrets_path()
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            values[key] = value
+    return values
+
+
+def ensure_dispatch_secrets(path: Path) -> None:
+    try:
+        config_text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise SystemExit(f"dispatch config not found: {path}") from exc
+    secrets = read_secrets()
+    missing = [
+        key
+        for key in SECRET_KEYS
+        if key in config_text and not valid_secret(os.environ.get(key)) and not valid_secret(secrets.get(key))
+    ]
+    if not missing:
+        return
+    target = secrets_path().relative_to(ROOT) if secrets_path().is_relative_to(ROOT) else secrets_path()
+    raise SystemExit(
+        "Sharp dispatcher is missing required secrets: "
+        + ", ".join(missing)
+        + "\n\nConfigure them before starting the dispatcher:\n"
+        + "  mkdir -p datas/sharp\n"
+        + "  cp secrets.env.example datas/sharp/secrets.env\n"
+        + f"  $EDITOR {target}\n\n"
+        + "Or run `./sharp web --no-dispatch`, save the token in Settings, then start `./sharp`."
+    )
+
+
+def valid_secret(value: str | None) -> bool:
+    if not value:
+        return False
+    lowered = value.lower()
+    return "your-token" not in lowered and "replace-me" not in lowered
+
+
+def print_db_health() -> None:
+    """Database size + reclaimable freelist (batch DB-health), read-only."""
+    db_file = Path.home() / ".local" / "share" / "sharp" / "sharp.db"
+    try:
+        if not db_file.is_file():
+            print(f"Database: {db_file} (not created yet)")
+            return
+        size_mb = db_file.stat().st_size / (1024 * 1024)
+        import sqlite3
+
+        with sqlite3.connect(f"file:{db_file}?mode=ro", uri=True) as _c:
+            page_size = _c.execute("PRAGMA page_size").fetchone()[0]
+            free = _c.execute("PRAGMA freelist_count").fetchone()[0]
+        free_kb = free * page_size / 1024
+        note = " — run `./sharp vacuum` after stopping Sharp to shrink" if free_kb > 1024 else ""
+        print(f"Database: {db_file} ({size_mb:.1f} MB, freelist {free_kb:.0f} KB reclaimable{note})")
+    except Exception as exc:
+        print(f"Database: unreadable ({exc})")
+
+
+def print_doctor() -> None:
+    cfg = config_path()
+    secrets = read_secrets()
+    uv_status = "not found"
+    try:
+        uv_status = find_uv()
+    except SystemExit as exc:
+        uv_status = str(exc)
+
+    docker_cli = shutil.which("docker") or "not found"
+    docker_ready = docker_available()
+    image = None
+    if cfg.exists():
+        try:
+            image = os.environ.get("SHARP_WORKER_IMAGE") or parse_worker_image(cfg)
+        except Exception as exc:
+            image = f"unreadable config: {exc}"
+
+    net_mode = None
+    if cfg.exists():
+        try:
+            net_mode = parse_network_mode(cfg)
+        except Exception:
+            net_mode = None
+
+    system = platform.system() or os.name
+    is_desktop_docker = system in ("Darwin", "Windows")
+
+    print(f"Sharp launcher: {LAUNCHER_VERSION}")
+    print(f"Package path: {ROOT}")
+    print(f"Platform: {system} {platform.release()} ({platform.machine()})")
+    print(f"Python: {sys.executable} ({sys.version.split()[0]})")
+    print(f"uv: {uv_status}")
+    print(f"Docker CLI: {docker_cli}")
+    print(f"Docker daemon: {'ok' if docker_ready else 'not ready'}")
+    print(f"Dispatch config: {cfg} ({'exists' if cfg.exists() else 'missing'})")
+    print(f"Worker network_mode: {net_mode or 'default (bridge)'}")
+    print(f"Secrets file: {secrets_path()} ({'exists' if secrets_path().exists() else 'missing'})")
+    print(f"Model token: {'configured' if valid_secret(os.environ.get('SHARP_ANTHROPIC_AUTH_TOKEN')) or valid_secret(secrets.get('SHARP_ANTHROPIC_AUTH_TOKEN')) else 'missing'}")
+    print_db_health()
+    print(f"Worker image from config: {image or 'none'}")
+    if docker_ready:
+        configured = image if image and not image.startswith("unreadable ") else "sharp-worker:latest"
+        print(f"Local worker image: {'yes' if image_exists(configured) else 'no'} ({configured})")
+    print("Worker setup: docker build -t sharp-worker:latest ./container (missing images are built on demand)")
+
+    if net_mode == "host" and is_desktop_docker:
+        print(
+            f"\n[warning] network_mode: host does not reach the real host on Docker Desktop "
+            f"({system}); it binds the Linux VM instead. Use 'bridge' unless you are on native "
+            f"Linux scanning localhost/internal targets."
+        )
+
+
+def parse_worker_image(path: Path) -> str | None:
+    in_container = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith((" ", "\t")) and stripped == "container:":
+            in_container = True
+            continue
+        if in_container and not line.startswith((" ", "\t")):
+            in_container = False
+        if in_container and stripped.startswith("image:"):
+            return stripped.split(":", 1)[1].strip().strip('"\'') or None
+    return None
+
+
+def parse_network_mode(path: Path) -> str | None:
+    in_container = False
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith((" ", "\t")) and stripped == "container:":
+            in_container = True
+            continue
+        if in_container and not line.startswith((" ", "\t")):
+            in_container = False
+        if in_container and stripped.startswith("network_mode:"):
+            return stripped.split(":", 1)[1].strip().strip('"\'') or None
+    return None
+
+
+def docker_available() -> bool:
+    return shutil.which("docker") is not None and subprocess.run(
+        ["docker", "info"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode == 0
+
+
+def image_exists(image: str) -> bool:
+    return subprocess.run(
+        ["docker", "image", "inspect", image], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode == 0
+
+
+def port_available(host: str, port: int) -> bool:
+    if port <= 0:
+        return True
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            sock.bind((host, port))
+    except OSError:
+        return False
+    return True
+
+
+def find_ephemeral_port(host: str) -> int:
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    with socket.socket(family, socket.SOCK_STREAM) as sock:
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def choose_server_port(host: str, requested: int, *, service: str) -> int:
+    if requested == 0:
+        selected = find_ephemeral_port(host)
+        print(f"[sharp] selected available {service} port {selected}.", flush=True)
+        return selected
+    # Retry a few times before giving up: a just-closed Sharp leaves uvicorn
+    # shutting down for a second or two, during which the port is still bound.
+    # Without this wait, re-launching right after closing the app fails with a
+    # bogus "another Sharp is running" even though it is the SAME instance
+    # releasing the port. Only a port that stays busy past the grace window is
+    # treated as a live second instance.
+    for attempt in range(10):
+        if port_available(host, requested):
+            return requested
+        if attempt == 0:
+            print(
+                f"[sharp] port {requested} still busy (a previous Sharp may be "
+                f"shutting down); waiting up to 5s ...",
+                flush=True,
+            )
+        time.sleep(0.5)
+    # Still busy after the grace window — almost always another Sharp already
+    # running. Do NOT silently hop to another port — that spawns a second,
+    # parallel Sharp (its own server + dispatcher) whose projects live on a
+    # different port than the first, which is exactly the confusion this guard
+    # prevents. Fail loudly; pass `--port 0` to opt into an auto-selected port.
+    raise SystemExit(
+        f"Error: {host}:{requested} 已被占用——很可能已有一个 Sharp 在运行。\n"
+        f"一台机器只应运行一个 Sharp。请先停止正在运行的实例，或用 `--port 0` "
+        f"显式启动一个使用随机空闲端口的额外实例。"
+    )
+
+
+def docker_run(cmd: list[str]) -> bool:
+    return subprocess.run(cmd, cwd=ROOT).returncode == 0
+
+
+def build_worker_image(image: str) -> bool:
+    print(f"[sharp] building worker image {image} ...", flush=True)
+    return docker_run(["docker", "build", "--platform", "linux/amd64", "./container", "-t", image])
+
+
+def ensure_worker_image(path: Path) -> None:
+    image = os.environ.get("SHARP_WORKER_IMAGE") or parse_worker_image(path)
+    if not image:
+        return
+    if not docker_available():
+        raise SystemExit("Docker daemon is not running. Start Docker Desktop, then retry.")
+    if image_exists(image):
+        return
+    if build_worker_image(image):
+        return
+    raise SystemExit(
+        "Worker image setup failed.\n\n"
+        "Sharp could not build the Docker worker image. "
+        "This is usually caused by network/proxy issues while Docker accesses "
+        "the package mirrors / GitHub (the image is vendored offline but the "
+        "base image pull may still need network).\n\n"
+        "Recommended fix on the source machine:\n"
+        "  docker build -t sharp-worker:latest ./container\n"
+        "  docker save sharp-worker:latest -o sharp-worker.tar\n\n"
+        "Then copy sharp-worker.tar to this machine and run:\n"
+        "  docker load -i sharp-worker.tar\n"
+        "  ./sharp"
+    )
+
+
+
+def wait_for_server(url: str, process: subprocess.Popen[bytes] | None, timeout: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            raise SystemExit(f"server process exited before API became ready: {process.returncode}")
+        try:
+            with urllib.request.urlopen(f"{url}/health", timeout=2):
+                return
+        except Exception:
+            time.sleep(0.5)
+    raise SystemExit(f"API did not become ready on {url}")
+
+
+def start_managed(cmd: list[str]) -> subprocess.Popen[bytes]:
+    if IS_WINDOWS:
+        # New process group so the whole tree can be signalled/killed together;
+        # there is no fork/setsid on Windows.
+        return subprocess.Popen(cmd, cwd=ROOT, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+    return subprocess.Popen(cmd, cwd=ROOT, start_new_session=True)
+
+
+def terminate_process(process: subprocess.Popen[bytes] | None, name: str) -> None:
+    if process is None or process.poll() is not None:
+        return
+    print(f"[sharp] stopping {name} ...", flush=True)
+    if IS_WINDOWS:
+        _terminate_windows(process, name)
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=8)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        process.wait(timeout=5)
+
+
+def _terminate_windows(process: subprocess.Popen[bytes], name: str) -> None:
+    # No process groups/killpg on Windows: taskkill /T walks and kills the whole
+    # child tree (uv -> python -> ...), which os-level terminate() would miss.
+    subprocess.run(
+        ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        process.wait(timeout=8)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def supervise(primary: subprocess.Popen[bytes], secondary: subprocess.Popen[bytes] | None, *, primary_name: str, secondary_name: str) -> int:
+    secondary_exit: int | None = None
+
+    def stop_all(signum: int | None = None, frame: object | None = None) -> None:
+        terminate_process(secondary, secondary_name)
+        terminate_process(primary, primary_name)
+        raise SystemExit(130 if signum else 0)
+
+    signal.signal(signal.SIGINT, stop_all)
+    # SIGTERM is not delivered to console apps on Windows; SIGINT (Ctrl+C) covers
+    # the interactive stop path there. Register SIGTERM only where it is real.
+    if not IS_WINDOWS:
+        signal.signal(signal.SIGTERM, stop_all)
+        # SIGHUP fires when the controlling terminal (window/tab) closes. Without
+        # a handler the launcher dies on the default action WITHOUT running
+        # stop_all, and because the children live in their own session
+        # (start_new_session=True) they do NOT get the terminal's SIGHUP — they
+        # orphan and keep holding the port. Handling it here makes "close the
+        # terminal" clean up just like Ctrl+C.
+        if hasattr(signal, "SIGHUP"):
+            signal.signal(signal.SIGHUP, stop_all)
+
+    # Safety net: however the launcher exits (normal return, uncaught exception,
+    # or a signal we converted to SystemExit above), guarantee the children are
+    # torn down so the port is always released.
+    import atexit
+
+    atexit.register(lambda: (terminate_process(secondary, secondary_name), terminate_process(primary, primary_name)))
+
+    while True:
+        primary_status = primary.poll()
+        if primary_status is not None:
+            terminate_process(secondary, secondary_name)
+            return primary_status if secondary_exit is None else secondary_exit
+        if secondary is not None and secondary_exit is None:
+            status = secondary.poll()
+            if status is not None:
+                secondary_exit = status
+                print(f"[sharp] {secondary_name} exited with status {status}; keeping {primary_name} running.", file=sys.stderr)
+                print(f"[sharp] Close {primary_name} or press Ctrl+C here to stop.", file=sys.stderr)
+        time.sleep(0.5)
+
+
+def run_app(extra: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="./sharp app")
+    parser.add_argument("--host", default=os.environ.get("SHARP_WINDOW_HOST", DEFAULT_HOST))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("SHARP_WINDOW_PORT", DEFAULT_PORT)))
+    parser.add_argument("--title", default=os.environ.get("SHARP_WINDOW_TITLE", DEFAULT_TITLE))
+    ns = parser.parse_args(extra)
+    ns.port = choose_server_port(ns.host, ns.port, service="desktop app")
+
+    cfg = config_path()
+    ensure_dispatch_secrets(cfg)
+    ensure_worker_image(cfg)
+    print("[sharp] syncing desktop dependencies...", flush=True)
+    sync_project(desktop=True)
+
+    server_url = f"http://{ns.host}:{ns.port}"
+    print(f"[sharp] starting desktop app on {server_url} ...", flush=True)
+    window = start_managed(
+        uv_cmd("run", *project_args(), "sharp", "window", "--host", ns.host, "--port", str(ns.port), "--title", ns.title)
+    )
+    print("[sharp] waiting for the local API...", flush=True)
+    wait_for_server(server_url, window)
+
+    print(f"[sharp] starting dispatcher with {cfg} ...", flush=True)
+    dispatcher = start_managed(
+        uv_cmd("run", *project_args(), "sharp", "dispatch", "--config", str(cfg), "--server", server_url)
+    )
+    return supervise(window, dispatcher, primary_name="desktop app", secondary_name="dispatcher")
+
+
+def run_web(extra: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="./sharp web")
+    parser.add_argument("--host", default=os.environ.get("SHARP_WEB_HOST", DEFAULT_HOST))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("SHARP_WEB_PORT", DEFAULT_PORT)))
+    parser.add_argument("--no-open", action="store_true", help="do not open the browser automatically")
+    parser.add_argument("--no-dispatch", action="store_true", help="start only the web/API server")
+    ns = parser.parse_args(extra)
+    ns.port = choose_server_port(ns.host, ns.port, service="web UI")
+    cfg = config_path()
+    if not ns.no_dispatch:
+        ensure_dispatch_secrets(cfg)
+        ensure_worker_image(cfg)
+
+    print("[sharp] syncing dependencies...", flush=True)
+    sync_project(desktop=False)
+
+    server_url = f"http://{ns.host}:{ns.port}"
+    print(f"[sharp] starting web UI on {server_url} ...", flush=True)
+    server = start_managed(
+        uv_cmd("run", *project_args(), "sharp", "serve", "--host", ns.host, "--port", str(ns.port), "--no-access-log")
+    )
+    wait_for_server(server_url, server)
+
+    if not ns.no_open and os.environ.get("SHARP_OPEN_BROWSER", "1") != "0":
+        # webbrowser is cross-platform (uses ShellExecute on Windows, `open` on
+        # macOS, xdg-open/etc. on Linux) and never blocks the launcher.
+        try:
+            webbrowser.open(server_url)
+        except Exception:
+            pass
+
+    dispatcher: subprocess.Popen[bytes] | None = None
+    if not ns.no_dispatch:
+        print(f"[sharp] starting dispatcher with {cfg} ...", flush=True)
+        dispatcher = start_managed(
+            uv_cmd("run", *project_args(), "sharp", "dispatch", "--config", str(cfg), "--server", server_url)
+        )
+    return supervise(server, dispatcher, primary_name="web server", secondary_name="dispatcher")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

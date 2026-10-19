@@ -1,0 +1,193 @@
+<div x-show="view === 'newproject'" x-cloak class="flex-1 flex flex-col overflow-hidden">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm flex items-center justify-center shrink-0">
+        <svg class="w-5 h-5 text-brand-500" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <span class="font-semibold text-slate-700 tracking-tight">新建渗透测试项目</span>
+    </div>
+    <div class="flex-1"></div>
+    <button @click="goProjectList()" class="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-50 transition">取消</button>
+  </header>
+  <div class="flex-1 flex overflow-hidden">
+
+    <!-- 左栏：表单 -->
+    <div class="flex-1 overflow-y-auto p-6 max-w-2xl">
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-1.5">项目名称</label>
+          <input x-model="newProject.title" placeholder="例如：某电商平台 Web 渗透测试" autocomplete="off"
+            class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-1">
+            Origin <span class="font-normal text-slate-400 text-xs">— 起点：目标地址、账号信息、已知入口</span>
+          </label>
+          <textarea x-model="newProject.origin" @input.debounce.300ms="syncAssetRefFromOrigin()" rows="5" placeholder="目标地址：https://example.com&#10;账号信息：test@example.com / testpass&#10;授权范围：全站"
+            class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 resize-none"></textarea>
+        </div>
+        <!-- 资产类型与资产键（批次 A3）：决定该目标在资产中心的归组 -->
+        <div class="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 space-y-2.5">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm font-semibold text-slate-700">资产类型 <span class="font-normal text-slate-400 text-xs">— 用于资产中心分组</span></span>
+          </div>
+          <div class="flex gap-1.5">
+            <button type="button" @click="setProjectTargetKind('web')"
+              class="flex-1 px-3 py-2 rounded-xl border text-xs font-semibold transition"
+              :class="newProject.targetKind === 'web' ? 'border-brand-300 bg-brand-50 text-brand-600' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'">
+              🌐 Web 站点
+            </button>
+            <button type="button" @click="setProjectTargetKind('miniprogram')"
+              class="flex-1 px-3 py-2 rounded-xl border text-xs font-semibold transition"
+              :class="newProject.targetKind === 'miniprogram' ? 'border-violet-300 bg-violet-50 text-violet-600' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'">
+              🧩 小程序
+            </button>
+            <button type="button" @click="setProjectTargetKind('android')"
+              class="flex-1 px-3 py-2 rounded-xl border text-xs font-semibold transition"
+              :class="newProject.targetKind === 'android' ? 'border-emerald-300 bg-emerald-50 text-emerald-600' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'">
+              🤖 App
+            </button>
+          </div>
+          <template x-if="newProject.targetKind === 'web'">
+            <div>
+              <label class="block text-[11px] font-medium text-slate-400 mb-1">资产键（域名，自动从 Origin 提取，可改）</label>
+              <input x-model="newProject.assetRef" placeholder="example.com"
+                class="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 font-mono">
+            </div>
+          </template>
+          <template x-if="newProject.targetKind !== 'web'">
+            <p class="text-[11px] text-slate-400 leading-relaxed">小程序 / App 项目推荐在对应分析器上传包时创建——将自动带类型与 AppID / 包名，并归入正确资产组。也可在此建空壳项目后从分析器追加。</p>
+          </template>
+        </div>
+        <!-- 任务模式（P1 收敛）：旗帜/记分只属于评分类任务，渗透项目不出现 -->
+        <div class="rounded-2xl border border-slate-200 bg-slate-50/60 p-3 space-y-2.5">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm font-semibold text-slate-700">任务模式 <span class="font-normal text-slate-400 text-xs">— 决定产物语义</span></span>
+          </div>
+          <div class="flex gap-1.5">
+            <button type="button" @click="setNewProjectTaskMode('pentest')"
+              class="flex-1 px-3 py-2 rounded-xl border text-xs font-semibold transition"
+              :class="newProject.taskMode === 'pentest' ? 'border-brand-300 bg-brand-50 text-brand-600' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'">
+              🔍 渗透测试（默认）
+            </button>
+            <button type="button" @click="setNewProjectTaskMode('scored')"
+              class="flex-1 px-3 py-2 rounded-xl border text-xs font-semibold transition"
+              :class="newProject.taskMode === 'scored' ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'">
+              🏁 评分类任务
+            </button>
+          </div>
+          <p class="text-[11px] text-slate-400 leading-relaxed"
+            x-text="newProject.taskMode === 'scored'
+              ? '评测 / CTF 场景：产物可标记为旗帜并记录分值，项目内显示记分板，AI 会按 flag 规范输出。'
+              : '授权渗透场景：只谈安全发现，界面不出现分数概念。需要跑评测时再切换即可。'"></p>
+        </div>
+        <div>
+          <label class="block text-sm font-semibold text-slate-700 mb-1">
+            Goal <span class="font-normal text-slate-400 text-xs">— 目标：AI 以此为终点判断任务是否完成</span>
+          </label>
+          <textarea x-model="newProject.goal" rows="5" placeholder="例如：验证是否存在 SQL 注入或越权漏洞"
+            class="w-full px-3 py-2.5 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 resize-none"></textarea>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-sm font-semibold text-slate-700">初始 Hints <span class="font-normal text-slate-400 text-xs">— 可选：为 AI 补充额外上下文</span></label>
+            <button type="button" @click="newProject.hints.push({ content: '' })" class="text-[11px] text-brand-500 hover:text-brand-600 font-medium">+ 添加</button>
+          </div>
+          <div class="space-y-2">
+            <template x-for="(hint, idx) in newProject.hints" :key="idx">
+              <div class="flex items-start gap-2">
+                <textarea x-model="hint.content" rows="2" placeholder="补充线索，例如：已知管理后台路径 /admin" class="flex-1 px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300 resize-none"></textarea>
+                <button type="button" @click="newProject.hints.splice(idx, 1)" x-show="newProject.hints.length > 1" class="mt-1 text-slate-300 hover:text-red-400 transition text-lg leading-none">&times;</button>
+              </div>
+            </template>
+          </div>
+        </div>
+        <div class="pt-2">
+          <button @click="createProject()" :disabled="!newProject.title.trim() || !newProject.origin.trim() || !newProject.goal.trim()"
+            class="w-full py-2.5 rounded-xl bg-brand-500 text-white text-sm font-semibold hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40 disabled:cursor-not-allowed">
+            创建项目并开始分析
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右栏：模板 -->
+    <div class="w-1/2 shrink-0 border-l border-slate-200 bg-slate-50/50 overflow-y-auto p-4 space-y-3">
+      <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-widest">内置模板 — 点击快速填入</p>
+
+      <!-- 攻防版 -->
+      <div @click="applyProjectTemplate('attack_defense')"
+        class="rounded-xl border border-slate-200 bg-white p-3.5 cursor-pointer hover:border-rose-300 hover:shadow-sm transition group">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <span class="text-sm font-semibold text-slate-700 group-hover:text-rose-600 transition">Web渗透 — 攻防版</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-200 shrink-0">数据 + 权限</span>
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">以获取数据或最高权限为目标，覆盖水平/垂直越权路径</p>
+      </div>
+
+      <!-- 漏洞挖掘版 -->
+      <div @click="applyProjectTemplate('vuln_hunt')"
+        class="rounded-xl border border-slate-200 bg-white p-3.5 cursor-pointer hover:border-amber-300 hover:shadow-sm transition group">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <span class="text-sm font-semibold text-slate-700 group-hover:text-amber-600 transition">Web渗透 — 漏洞挖掘版</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 shrink-0">最大漏洞数</span>
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">注入/越权/信息泄露/逻辑漏洞全覆盖，每个漏洞含 PoC</p>
+      </div>
+
+      <!-- CTF -->
+      <div @click="applyProjectTemplate('ctf')"
+        class="rounded-xl border border-slate-200 bg-white p-3.5 cursor-pointer hover:border-emerald-300 hover:shadow-sm transition group">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <span class="text-sm font-semibold text-slate-700 group-hover:text-emerald-600 transition">CTF — 获取 Flag</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0">flag{...}</span>
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">以获取 flag 为唯一目标，适用于 CTF 赛题</p>
+      </div>
+
+      <!-- 复测验证 -->
+      <div @click="applyProjectTemplate('retest')"
+        class="rounded-xl border border-slate-200 bg-white p-3.5 cursor-pointer hover:border-violet-300 hover:shadow-sm transition group">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <span class="text-sm font-semibold text-slate-700 group-hover:text-violet-600 transition">漏洞复测验证</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-600 border border-violet-200 shrink-0">补丁验证</span>
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">对已知漏洞逐一验证是否修复，输出已修复/未修复/部分修复结论</p>
+      </div>
+
+      <!-- 业务逻辑专项 -->
+      <div @click="applyProjectTemplate('logic_vuln')"
+        class="rounded-xl border border-slate-200 bg-white p-3.5 cursor-pointer hover:border-sky-300 hover:shadow-sm transition group">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <span class="text-sm font-semibold text-slate-700 group-hover:text-sky-600 transition">业务逻辑专项测试</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-600 border border-sky-200 shrink-0">逻辑漏洞</span>
+        </div>
+        <p class="text-[11px] text-slate-400 leading-relaxed">IDOR/越权/流程绕过/竞态/状态机滥用，需双账号凭据驱动</p>
+      </div>
+
+      <!-- 自定义模板分隔 -->
+      <div class="flex items-center gap-2 pt-1">
+        <p class="text-[11px] font-semibold text-slate-400 uppercase tracking-widest shrink-0">自定义模板</p>
+        <div class="flex-1 h-px bg-slate-200"></div>
+        <button @click="npPage.showAddForm = true; npPage.editingIdx = -1; npPage.editForm = {name:'',origin:'',goal:''}" class="text-[11px] text-brand-500 hover:text-brand-600 shrink-0">+ 添加</button>
+      </div>
+
+      <!-- 自定义模板列表 -->
+      <template x-for="(tpl, idx) in npPage.customTemplates" :key="idx">
+        <div class="rounded-xl border border-slate-200 bg-white p-3 group">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <span class="text-sm font-semibold text-slate-700 truncate" x-text="tpl.name"></span>
+            <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+              <button @click="startEditTemplate(idx)" class="text-[11px] text-slate-400 hover:text-brand-500 px-1.5 py-0.5 rounded transition">编辑</button>
+              <button @click="deleteCustomTemplate(idx)" class="text-[11px] text-slate-400 hover:text-red-500 px-1.5 py-0.5 rounded transition">删除</button>
+            </div>
+          </div>
+          <button @click="applyCustomTemplate(idx)" class="text-[10px] text-brand-500 hover:text-brand-600 transition">→ 填入表单</button>
+        </div>
+      </template>
+      <template x-if="npPage.customTemplates.length === 0">
+        <p class="text-[11px] text-slate-300 text-center py-2">点「+ 添加」创建你的自定义模板</p>
+      </template>
+    </div>
+  </div>
+</div>

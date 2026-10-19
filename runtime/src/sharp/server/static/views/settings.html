@@ -1,0 +1,300 @@
+<div x-show="view === 'settings'" x-cloak class="flex-1 flex flex-col overflow-hidden">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
+        <img src="/static/favicon.svg" alt="" class="w-5 h-5 block">
+      </div>
+      <span class="font-semibold text-slate-700 tracking-tight">服务端设置</span>
+    </div>
+    <div class="flex-1"></div>
+  </header>
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+
+    <!-- ═══ 左列：模型 API 配置 + MCP 服务器 ═══ -->
+    <div class="space-y-5">
+    <!-- 模型 API 配置卡片 -->
+    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h4 class="text-sm font-semibold text-slate-700">模型 API 配置</h4>
+          <p class="mt-1 text-[11px] text-slate-400" x-text="secretsPath ? `保存到 ${secretsPath}` : '保存到 Sharp secrets 配置文件'"></p>
+        </div>
+        <span class="rounded-full px-2 py-1 text-[10px] font-medium"
+          :class="(dispatcherMode === 'anthropic' && secretConfigured('SHARP_ANTHROPIC_AUTH_TOKEN')) || (dispatcherMode === 'openai' && secretConfigured('OPENAI_API_KEY')) || (dispatcherMode === 'inflection' && secretConfigured('PI_API_KEY')) ? 'bg-teal-50 text-teal-700 border border-teal-100' : 'bg-amber-50 text-amber-700 border border-amber-100'"
+          x-text="(dispatcherMode === 'anthropic' && secretConfigured('SHARP_ANTHROPIC_AUTH_TOKEN')) || (dispatcherMode === 'openai' && secretConfigured('OPENAI_API_KEY')) || (dispatcherMode === 'inflection' && secretConfigured('PI_API_KEY')) ? '已配置' : '未配置'"></span>
+      </div>
+
+      <!-- Dispatcher 模式选择器 -->
+      <div class="mt-3">
+        <label class="text-[11px] text-slate-400 mb-1.5 block font-medium uppercase tracking-wider">DISPATCHER 模式
+          <span class="normal-case font-normal">（选择后激活对应 Worker：Claude 或 OpenAI，重启生效）</span></label>
+        <select x-model="dispatcherMode" class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          <option value="anthropic">Claude / Anthropic</option>
+          <option value="openai">OpenAI</option>
+        </select>
+      </div>
+
+      <!-- Anthropic 配置字段 -->
+      <template x-if="dispatcherMode === 'anthropic'">
+      <div class="mt-3 space-y-3">
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Token（SHARP_ANTHROPIC_AUTH_TOKEN）</label>
+          <input type="password" x-model="secretsForm.SHARP_ANTHROPIC_AUTH_TOKEN" placeholder="留空表示不修改当前 token" autocomplete="off"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        </div>
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型名称（SHARP_MODEL）</label>
+          <input type="text" x-model="secretsForm.SHARP_MODEL"
+            placeholder="留空则用默认值（deepseek-v4-pro）" autocomplete="off"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          <p class="text-[10px] text-slate-400 mt-1" x-text="secretConfigured('SHARP_MODEL') ? '当前：' + secretMasked('SHARP_MODEL') : '使用默认值'"></p>
+        </div>
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Base URL（SHARP_BASE_URL）</label>
+          <input type="text" x-model="secretsForm.SHARP_BASE_URL"
+            placeholder="留空则用默认值（https://api.deepseek.com/anthropic）" autocomplete="off"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          <p class="text-[10px] text-slate-400 mt-1" x-text="secretConfigured('SHARP_BASE_URL') ? '当前：' + secretMasked('SHARP_BASE_URL') : '使用默认值'"></p>
+        </div>
+        <p class="text-[11px] text-slate-400">保存后需重启 Dispatcher 才会对 Worker 任务生效；<span class="text-emerald-600">App 对话 AI 接口保存后立即生效，无需重启。</span></p>
+      </div>
+      </template>
+
+      <!-- OpenAI 配置字段 -->
+      <template x-if="dispatcherMode === 'openai'">
+      <div class="mt-3 space-y-3">
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Key（OPENAI_API_KEY）</label>
+          <input type="password" x-model="secretsForm.OPENAI_API_KEY" placeholder="留空表示不修改当前 API Key" autocomplete="off"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        </div>
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">模型名称（OPENAI_MODEL）</label>
+          <input type="text" x-model="secretsForm.OPENAI_MODEL"
+            placeholder="例如：gpt-4o" autocomplete="off"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          <p class="text-[10px] text-slate-400 mt-1" x-text="secretConfigured('OPENAI_MODEL') ? '当前：' + secretMasked('OPENAI_MODEL') : '未配置'"></p>
+        </div>
+        <div>
+          <label class="text-[11px] text-slate-400 mb-1 block font-medium">API Base URL（OPENAI_BASE_URL）</label>
+          <input type="text" x-model="secretsForm.OPENAI_BASE_URL"
+            placeholder="留空则使用 OpenAI 官方地址" autocomplete="off"
+            class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          <p class="text-[10px] text-slate-400 mt-1" x-text="secretConfigured('OPENAI_BASE_URL') ? '当前：' + secretMasked('OPENAI_BASE_URL') : '使用默认地址'"></p>
+        </div>
+        <p class="text-[11px] text-slate-400">保存后需重启 Dispatcher 才会对 Worker 任务生效。</p>
+      </div>
+      </template>
+
+      <div class="mt-3 flex justify-end">
+        <button @click="saveServerSecrets()"
+          :disabled="(dispatcherMode === 'anthropic' && !secretsForm.SHARP_ANTHROPIC_AUTH_TOKEN && !secretsForm.SHARP_MODEL && !secretsForm.SHARP_BASE_URL) || (dispatcherMode === 'openai' && !secretsForm.OPENAI_API_KEY && !secretsForm.OPENAI_MODEL && !secretsForm.OPENAI_BASE_URL) || (dispatcherMode === 'inflection' && !secretsForm.PI_API_KEY && !secretsForm.PI_MODEL && !secretsForm.PI_BASE_URL)"
+          class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition shadow-sm disabled:opacity-30">保存配置</button>
+      </div>
+
+      <div class="flex justify-end gap-2 mt-3">
+        <button @click="restartDispatcher()" :disabled="dispatcherRestarting"
+          class="px-4 py-2 text-sm border border-amber-200 text-amber-600 rounded-xl font-medium hover:bg-amber-50 transition flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          <span x-text="dispatcherRestarting ? '重启中...' : '重启 Dispatcher'"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- MCP 服务器配置 -->
+    <div class="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h4 class="text-sm font-semibold text-slate-700">MCP 服务器</h4>
+          <p class="mt-1 text-[11px] text-slate-400">为 claude code agent 注入外部 MCP 工具服务器，保存后写入 dispatch.yaml 的 mcp_servers 段，重启 Dispatcher 生效</p>
+        </div>
+        <button @click="addMcpServer()" class="px-3 py-1.5 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">
+          新增
+        </button>
+      </div>
+
+      <!-- 服务器列表 -->
+      <div class="mt-3 space-y-2" x-show="mcpServers.length > 0">
+        <template x-for="(s, i) in mcpServers" :key="s.name + '_' + i">
+          <div class="rounded-lg border border-slate-200 bg-white p-3 flex items-center gap-3">
+            <span class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+              :class="s.transport === 'http' ? 'bg-brand-50 text-brand-600 border border-brand-100' : 'bg-violet-50 text-violet-600 border border-violet-100'"
+              x-text="s.transport"></span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium text-slate-700" x-text="s.name"></span>
+                <span x-show="!s.enabled" class="rounded-full px-2 py-0.5 text-[10px] bg-slate-100 text-slate-500">停用</span>
+              </div>
+              <p class="text-[11px] text-slate-400 truncate"
+                x-text="s.transport === 'http' ? s.url : s.command"></p>
+            </div>
+            <button @click="editMcpServer(i)" class="text-[11px] text-brand-600 hover:text-brand-700 shrink-0">编辑</button>
+            <button @click="removeMcpServer(i)" class="text-[11px] text-rose-500 hover:text-rose-600 shrink-0">删除</button>
+          </div>
+        </template>
+      </div>
+      <p x-show="mcpServers.length === 0" class="mt-3 text-[11px] text-slate-400">
+        尚未配置 MCP 服务器，点击「新增」添加。
+      </p>
+
+      <!-- 编辑表单 -->
+      <div x-show="mcpEditor.show" class="mt-3 rounded-lg border border-slate-200 bg-white p-3 space-y-3">
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">名称</label>
+            <input type="text" x-model="mcpEditor.form.name" placeholder="如 burp-scanner"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">传输方式</label>
+            <select x-model="mcpEditor.form.transport"
+              class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+              <option value="http">HTTP</option>
+              <option value="stdio">stdio</option>
+            </select>
+          </div>
+        </div>
+
+        <template x-if="mcpEditor.form.transport === 'http'">
+        <div class="space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">URL</label>
+            <input type="text" x-model="mcpEditor.form.url" placeholder="http://host.docker.internal:8081/sse"
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">Headers（可选）</label>
+            <div class="space-y-1.5">
+              <template x-for="(h, hi) in mcpEditor.form.headers" :key="hi">
+                <div class="flex gap-2">
+                  <input type="text" x-model="h.key" placeholder="key"
+                    class="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                  <input type="text" x-model="h.value" placeholder="value"
+                    class="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                  <button @click="removeMcpHeader(hi)" class="text-[11px] text-rose-500 hover:text-rose-600">删</button>
+                </div>
+              </template>
+              <button @click="addMcpHeader()" class="text-[11px] text-brand-600 hover:text-brand-700">+ 添加 Header</button>
+            </div>
+          </div>
+        </div>
+        </template>
+
+        <template x-if="mcpEditor.form.transport === 'stdio'">
+        <div class="space-y-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">启动命令</label>
+            <input type="text" x-model="mcpEditor.form.command" placeholder="node /opt/mcp-server/index.js"
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">参数（可选）</label>
+            <div class="space-y-1.5">
+              <template x-for="(a, ai) in mcpEditor.form.args" :key="ai">
+                <div class="flex gap-2">
+                  <input type="text" x-model="mcpEditor.form.args[ai]" placeholder="--flag"
+                    class="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                  <button @click="removeMcpArg(ai)" class="text-[11px] text-rose-500 hover:text-rose-600">删</button>
+                </div>
+              </template>
+              <button @click="addMcpArg()" class="text-[11px] text-brand-600 hover:text-brand-700">+ 添加参数</button>
+            </div>
+          </div>
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">环境变量（可选）</label>
+            <div class="space-y-1.5">
+              <template x-for="(e, ei) in mcpEditor.form.env" :key="ei">
+                <div class="flex gap-2">
+                  <input type="text" x-model="e.key" placeholder="KEY"
+                    class="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                  <input type="text" x-model="e.value" placeholder="value"
+                    class="flex-1 px-2 py-1.5 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+                  <button @click="removeMcpEnv(ei)" class="text-[11px] text-rose-500 hover:text-rose-600">删</button>
+                </div>
+              </template>
+              <button @click="addMcpEnv()" class="text-[11px] text-brand-600 hover:text-brand-700">+ 添加环境变量</button>
+            </div>
+          </div>
+        </div>
+        </template>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-[11px] text-slate-400 mb-1 block font-medium">工具数上限</label>
+            <input type="number" x-model.number="mcpEditor.form.max_tools" min="1"
+              class="w-full px-3 py-2 border border-slate-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+          </div>
+          <div class="flex items-end pb-1">
+            <label class="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+              <input type="checkbox" x-model="mcpEditor.form.enabled"
+                class="w-4 h-4 rounded border-slate-300 text-brand-500 focus:ring-brand-100">
+              启用
+            </label>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-1">
+          <button @click="cancelMcpEdit()" class="px-3 py-1.5 text-sm text-slate-500 hover:bg-slate-50 rounded-xl transition">取消</button>
+          <button @click="saveMcpServer()" class="px-3 py-1.5 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition">保存此项</button>
+        </div>
+      </div>
+
+      <div class="mt-3 flex justify-end">
+        <button @click="saveMcpServers()" :disabled="mcpSaving"
+          class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200 disabled:opacity-40">
+          <span x-text="mcpSaving ? '保存中...' : '保存 MCP 配置'"></span>
+        </button>
+      </div>
+    </div>
+
+    </div><!-- /左列 -->
+
+    <!-- ═══ 右列：服务端参数 + 修改密码 ═══ -->
+    <div class="space-y-5">
+    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-4">
+      <h4 class="text-sm font-semibold text-slate-700">服务端参数</h4>
+      <div>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">Intent 超时时间（秒）</label>
+        <input type="number" x-model.number="settingsForm.intent_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+      </div>
+      <div>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">Reason 超时时间（秒）</label>
+        <input type="number" x-model.number="settingsForm.reason_timeout" class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition">
+        <p class="text-[11px] text-slate-400 mt-1">共享后端配置，影响所有 Dispatcher 消费者。</p>
+      </div>
+      <div>
+        <label class="text-[11px] text-slate-400 mb-1 block font-medium">AI 报告自定义指令（可选）</label>
+        <textarea x-model="settingsForm.report_instructions" rows="4"
+          placeholder="例如：报告语言使用英文；漏洞 CVSS 评分必须给出；每个高危漏洞附上 Nuclei 模板名称…"
+          class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition resize-y"></textarea>
+        <p class="text-[11px] text-slate-400 mt-1">追加到每次 AI 报告生成的 prompt 末尾。</p>
+      </div>
+      <div class="flex justify-end">
+        <button @click="saveServerSettings()" class="px-4 py-2 text-sm bg-brand-500 text-white rounded-xl font-medium hover:bg-brand-600 transition shadow-sm shadow-brand-200">保存服务端设置</button>
+      </div>
+    </div>
+
+    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <h4 class="text-sm font-semibold text-slate-700 mb-3">修改登录密码</h4>
+      <div class="space-y-2">
+        <input type="password" x-model="pwForm.old" placeholder="当前密码" autocomplete="current-password"
+          class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        <input type="password" x-model="pwForm.new1" placeholder="新密码（≥10位，含大小写+数字+特殊字符）" autocomplete="new-password"
+          class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        <input type="password" x-model="pwForm.new2" placeholder="确认新密码" autocomplete="new-password"
+          class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
+        <p x-show="pwError" class="text-[11px]" :class="pwError.includes('成功') ? 'text-emerald-600' : 'text-rose-500'" x-text="pwError"></p>
+      </div>
+      <div class="mt-3 flex justify-end">
+        <button @click="changePassword()" :disabled="!pwForm.old || !pwForm.new1 || pwLoading"
+          class="px-4 py-2 text-sm bg-slate-800 text-white rounded-xl font-medium hover:bg-slate-900 transition shadow-sm disabled:opacity-30">
+          <span x-text="pwLoading ? '修改中...' : '修改密码'"></span>
+        </button>
+      </div>
+    </div>
+
+    </div><!-- /右列 -->
+    </div><!-- /grid -->
+  </div>
+</div>

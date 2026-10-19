@@ -1,0 +1,33 @@
+# Secrets & licensing — never commit
+.secrets
+datas/sharp/secrets.env
+datas/sharp/license_signing_key.b64
+license.key
+*.key
+
+# Local data
+datas/sharp/*.db
+datas/sharp/*.db-wal
+datas/sharp/*.db-shm
+reports/
+
+# 第三方二进制：构建期由 fetch_vendor.sh 拉取，不入库（≈283MB，且再分发条款见 THIRD_PARTY_NOTICES.md）
+container/vendor/
+container/device-tools/
+
+# Build output
+dist/
+build/
+.buildenv/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+runtime/.venv/
+
+# OS
+.DS_Store
+
+# 开源打包 deny 清单（本地专用）
+.oss-deny.txt

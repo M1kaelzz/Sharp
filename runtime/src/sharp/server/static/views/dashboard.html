@@ -1,0 +1,204 @@
+<div x-show="view === 'dashboard'" x-cloak class="flex-1 flex flex-col overflow-hidden">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="h-8 w-8 rounded-lg border border-slate-200 bg-white shadow-sm shadow-slate-200/40 flex items-center justify-center shrink-0 overflow-hidden">
+        <img src="/static/favicon.svg" alt="" class="w-5 h-5 block">
+      </div>
+      <span class="font-semibold text-slate-700 tracking-tight">仪表盘</span>
+    </div>
+    <div class="flex-1"></div>
+  </header>
+
+  <!-- 待审批全局横幅（跨项目汇总） -->
+  <div x-show="approvalStats.pending > 0" x-cloak x-transition
+    class="shrink-0 bg-orange-50/80 border-b border-orange-200/60 px-4 py-2 flex items-center gap-3">
+    <span class="h-2 w-2 rounded-full bg-orange-500 animate-pulse shrink-0"></span>
+    <span class="text-xs font-medium text-orange-700">
+      <span class="tabular-nums font-semibold" x-text="approvalStats.pending"></span> 个高危操作待审批
+    </span>
+    <button @click="goApprovals()" class="ml-1 px-2 py-0.5 rounded-lg bg-orange-600 text-white text-[11px] font-medium hover:bg-orange-700 transition">前往审批</button>
+  </div>
+
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-7xl mx-auto space-y-5">
+    <!-- 统计卡片 -->
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-brand-400 bg-white p-5">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] uppercase tracking-wider text-slate-400">项目总数</span>
+          <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </div>
+        <div class="mt-2 text-3xl font-semibold text-slate-800 tabular-nums" x-text="projects.length"></div>
+        <div class="mt-1 text-[11px] text-slate-400" x-show="countProjectsByStatus('active') > 0" x-text="`${countProjectsByStatus('active')} 个运行中`"></div>
+      </div>
+      <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-teal-500 bg-white p-5">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] uppercase tracking-wider text-slate-400">运行中</span>
+          <span class="h-2 w-2 rounded-full bg-teal-500 animate-pulse"></span>
+        </div>
+        <div class="mt-2 text-3xl font-semibold text-teal-600 tabular-nums" x-text="countProjectsByStatus('active')"></div>
+        <div class="mt-1 text-[11px] text-slate-400" x-show="totalWorkingIntents() > 0" x-text="`${totalWorkingIntents()} 个行动执行中`"></div>
+      </div>
+      <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-emerald-500 bg-white p-5">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] uppercase tracking-wider text-slate-400">已完成</span>
+          <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="m5 13 4 4L19 7"/></svg>
+        </div>
+        <div class="mt-2 text-3xl font-semibold text-emerald-600 tabular-nums" x-text="countProjectsByStatus('completed')"></div>
+      </div>
+      <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-sky-400 bg-white p-5">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] uppercase tracking-wider text-slate-400">已确认证据</span>
+          <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4m0 12v4m10-10h-4M6 12H2"/></svg>
+        </div>
+        <div class="mt-2 text-3xl font-semibold text-slate-800 tabular-nums" x-text="totalFacts()"></div>
+        <div class="mt-1 text-[11px] text-slate-400" x-show="totalIntents() > 0" x-text="`${totalIntents()} 个探索行动`"></div>
+      </div>
+      <div class="rounded-2xl border border-slate-200/60 border-t-4 border-t-rose-400 bg-white p-5">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] uppercase tracking-wider text-slate-400">确认漏洞</span>
+          <svg class="w-4 h-4 text-rose-300" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="mt-2 flex items-baseline gap-2">
+          <span class="text-3xl font-semibold text-rose-600 tabular-nums" x-text="vulnStats.total"></span>
+          <span class="text-xs text-emerald-600 tabular-nums" x-show="vulnStats.confirmed > 0" x-text="`已确认 ${vulnStats.confirmed}`"></span>
+        </div>
+        <div class="mt-1.5 flex items-center gap-2.5 text-[11px] tabular-nums">
+          <span x-show="vulnStats.critical > 0" class="text-red-600">严重 <span class="font-semibold" x-text="vulnStats.critical"></span></span>
+          <span x-show="vulnStats.high > 0" class="text-orange-600">高危 <span class="font-semibold" x-text="vulnStats.high"></span></span>
+          <span x-show="vulnStats.medium > 0" class="text-amber-600">中危 <span class="font-semibold" x-text="vulnStats.medium"></span></span>
+          <span x-show="vulnStats.low > 0" class="text-sky-600">低危 <span class="font-semibold" x-text="vulnStats.low"></span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 漏洞严重度环形图 + 发现趋势面积图 -->
+    <div x-show="vulnStats.total > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <!-- SVG 环形图 -->
+      <div class="rounded-2xl border border-slate-200/60 bg-white p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-semibold text-slate-700">漏洞严重度分布</h3>
+          <span class="text-[11px] text-slate-400" x-text="`${vulnStats.total} 条已纳入`"></span>
+        </div>
+        <div class="flex items-center gap-6 flex-wrap">
+          <div class="relative shrink-0" style="width:160px;height:160px"
+            @mouseenter="donutHandleEnter($event)" @mouseover="donutHandleEnter($event)" @mouseleave="donutHandleLeave()">
+            <div x-html="vulnDonutSvg()"></div>
+            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span class="text-2xl font-semibold text-slate-800 tabular-nums" x-text="vulnDonutHover ? vulnDonutPaths().arcs.find(a => a.key === vulnDonutHover)?.value : vulnDonutPaths().dominantPct + '%'" x-show="vulnDonutPaths().total > 0"></span>
+              <span class="text-[10px] text-slate-400" x-text="vulnDonutHover ? (vulnDonutPaths().arcs.find(a => a.key === vulnDonutHover)?.label || '') : (vulnDonutPaths().dominantLabel || '总计')"></span>
+            </div>
+          </div>
+          <div class="flex flex-col gap-2 text-xs">
+            <template x-for="arc in vulnDonutPaths().arcs" :key="arc.key">
+              <div class="flex items-center gap-2 cursor-pointer rounded-lg px-1.5 py-0.5 transition" :class="vulnDonutHover === arc.key ? 'bg-slate-50' : ''"
+                @mouseenter="vulnDonutHover = arc.key" @mouseleave="vulnDonutHover = null">
+                <span class="w-3 h-3 rounded-full" :style="`background:${arc.color}`"></span>
+                <span class="text-slate-600" x-text="arc.label"></span>
+                <span class="tabular-nums font-semibold text-slate-700" x-text="arc.value"></span>
+                <span class="text-[10px] text-slate-400 tabular-nums" x-text="`${arc.pct}%`"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- SVG 趋势面积图 -->
+      <div class="rounded-2xl border border-slate-200/60 bg-white p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-semibold text-slate-700">漏洞发现趋势</h3>
+          <span class="text-[11px] text-slate-400">近 14 天</span>
+        </div>
+        <div class="relative">
+          <div x-html="vulnTrendSvg()"></div>
+          <!-- x 轴标签 -->
+          <div class="flex justify-between mt-1.5 px-1 text-[10px] text-slate-400 tabular-nums">
+            <template x-for="(lbl, i) in vulnTrendPaths().labels" :key="i">
+              <span x-show="i % 3 === 0 || i === vulnTrendPaths().labels.length - 1" x-text="lbl"></span>
+            </template>
+          </div>
+        </div>
+        <div class="mt-3 flex items-center gap-4 text-[11px] text-slate-500">
+          <span>峰值 <span class="font-semibold text-slate-700 tabular-nums" x-text="vulnTrendPaths().maxVal"></span> 个/天</span>
+          <span>总计 <span class="font-semibold text-slate-700 tabular-nums" x-text="vulnTrendData().reduce((a,b) => a + b.count, 0)"></span> 个</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 状态分布 + 运行态 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="rounded-2xl border border-slate-200/60 bg-white p-5">
+        <h3 class="text-sm font-semibold text-slate-700 mb-4">项目状态分布</h3>
+        <div class="space-y-3">
+          <template x-for="s in dashboardStatusBars()" :key="s.key">
+            <div>
+              <div class="flex items-center justify-between text-xs mb-1">
+                <span class="flex items-center gap-1.5 text-slate-600">
+                  <span class="h-2 w-2 rounded-full" :class="s.dot"></span>
+                  <span x-text="s.label"></span>
+                </span>
+                <span class="tabular-nums text-slate-500" x-text="s.count"></span>
+              </div>
+              <div class="h-2 rounded-full bg-slate-100 overflow-hidden">
+                <div class="h-full rounded-full transition-all" :class="s.bar" :style="`width: ${s.pct}%`"></div>
+              </div>
+            </div>
+          </template>
+          <template x-if="projects.length === 0">
+            <p class="text-sm text-slate-400 text-center py-4">暂无项目</p>
+          </template>
+        </div>
+      </div>
+
+      <div class="rounded-2xl border border-slate-200/60 bg-white p-5">
+        <h3 class="text-sm font-semibold text-slate-700 mb-4">当前运行态</h3>
+        <div class="grid grid-cols-2 gap-4">
+          <div class="rounded-xl bg-amber-50/60 p-4" title="正在被 AI 执行的探索行动（工作线程正在处理中）">
+            <div class="text-[11px] text-amber-600 mb-1">AI 正在执行</div>
+            <div class="text-2xl font-semibold text-amber-700 tabular-nums" x-text="totalWorkingIntents()"></div>
+          </div>
+          <div class="rounded-xl bg-sky-50/60 p-4" title="已生成但还没有 AI 认领的探索行动，会排队等待执行">
+            <div class="text-[11px] text-sky-600 mb-1">排队中行动</div>
+            <div class="text-2xl font-semibold text-sky-700 tabular-nums" x-text="totalUnclaimedIntents()"></div>
+          </div>
+          <div class="rounded-xl bg-slate-50 p-4" title="AI 到目前为止生成过的全部探索行动（含已完成）">
+            <div class="text-[11px] text-slate-500 mb-1">累计行动</div>
+            <div class="text-2xl font-semibold text-slate-700 tabular-nums" x-text="totalIntents()"></div>
+          </div>
+          <div class="rounded-xl bg-slate-50 p-4" title="你手动补充给 AI 的线索，会优先被采用">
+            <div class="text-[11px] text-slate-500 mb-1">人工线索</div>
+            <div class="text-2xl font-semibold text-slate-700 tabular-nums" x-text="totalHints()"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 最近项目 -->
+    <div class="rounded-2xl border border-slate-200/60 bg-white p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-slate-700">最近项目</h3>
+        <button @click="goProjectList()" class="text-xs text-brand-600 hover:text-brand-700 transition">查看全部 →</button>
+      </div>
+      <template x-if="recentProjects().length === 0">
+        <p class="text-sm text-slate-400 text-center py-6">还没有项目，点右上角「新建项目」开始</p>
+      </template>
+      <div class="space-y-2">
+        <template x-for="p in recentProjects()" :key="p.id">
+          <div @click="openProject(p.id)" class="flex items-center gap-3 rounded-xl border border-slate-100 px-3 py-2.5 cursor-pointer hover:bg-slate-50 transition">
+            <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-[0.12em] shrink-0"
+              :class="projectStatusBadgeClass(p.status)">
+              <span class="h-1.5 w-1.5 rounded-full shrink-0" :class="projectStatusDotClass(p.status)"></span>
+              <span x-text="statusLabel(p.status)"></span>
+            </span>
+            <span class="flex-1 min-w-0 truncate text-sm font-medium text-slate-700" x-text="p.title"></span>
+            <span class="text-[11px] text-slate-400 tabular-nums shrink-0" x-text="`证据 ${p.fact_count} · 行动 ${p.intent_count}`"></span>
+            <span x-show="p.vuln_high_count > 0" class="text-[11px] text-red-500 tabular-nums shrink-0 font-medium" x-text="`高危 ${p.vuln_high_count}`"></span>
+            <span x-show="p.pending_approval_count > 0" class="text-[11px] text-orange-500 tabular-nums shrink-0 font-medium" x-text="`待审批 ${p.pending_approval_count}`"></span>
+            <span class="text-[11px] text-slate-400 shrink-0 hidden sm:block" x-text="formatDate(p.created_at)"></span>
+          </div>
+        </template>
+      </div>
+    </div>
+    </div><!-- /max-w-7xl -->
+  </div>
+</div>

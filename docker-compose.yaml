@@ -1,0 +1,41 @@
+services:
+  sharp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sharp-app
+    container_name: sharp-server
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./datas/sharp/:/sharp/datas/sharp/
+      - ./reports/:/sharp/reports/
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 3s
+    restart: unless-stopped
+    command: ["uv", "run", "sharp", "serve", "--host", "0.0.0.0", "--no-access-log"]
+  sharp-dispatcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sharp-app
+    container_name: sharp-dispatcher
+    environment:
+      SHARP_ANTHROPIC_AUTH_TOKEN: ${SHARP_ANTHROPIC_AUTH_TOKEN:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./dispatch.yaml:/sharp/dispatch.yaml
+      - ./datas/sharp/:/sharp/datas/sharp/
+    depends_on:
+      sharp-server:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["uv", "run", "sharp", "dispatch", "--config", "dispatch.yaml"]

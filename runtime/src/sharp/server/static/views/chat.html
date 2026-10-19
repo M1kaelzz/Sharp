@@ -1,0 +1,153 @@
+<div x-show="view === 'chat'" x-cloak class="flex-1 flex overflow-hidden">
+
+  <!-- 左侧栏：新建 + 历史会话列表 -->
+  <aside class="w-64 shrink-0 flex flex-col bg-slate-50 border-r border-slate-200/80">
+    <!-- 新建对话区域 -->
+    <div class="p-3 border-b border-slate-200/60">
+      <!-- 有活跃会话时：只显示新建按钮 -->
+      <button x-show="chat.sessionId" @click="startNewChatSelect()"
+        class="w-full flex items-center gap-2 justify-center h-9 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition shadow-sm">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        新建对话
+      </button>
+      <!-- 无活跃会话时：显示选择器 + 确认按钮 -->
+      <div x-show="!chat.sessionId" class="space-y-2">
+        <div class="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          新建对话
+        </div>
+        <select x-model="chat.role"
+          class="w-full text-xs rounded-lg border border-slate-200 px-2 py-1.5 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-200">
+          <option value="assistant">Sharp 助手</option>
+          <option value="tool_guide">工具向导</option>
+        </select>
+        <select x-model="chat.projectId"
+          class="w-full text-xs rounded-lg border border-slate-200 px-2 py-1.5 text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-200"
+          title="关联项目：对话时读取该项目的证据/行动/线索">
+          <option value="">不关联项目</option>
+          <template x-for="p in projects" :key="p.id">
+            <option :value="p.id" x-text="(p.title||p.id).slice(0,28)"></option>
+          </template>
+        </select>
+        <button @click="confirmNewChat()"
+          class="w-full h-9 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition">
+          开始对话
+        </button>
+      </div>
+    </div>
+
+    <!-- 历史会话列表 -->
+    <div class="flex-1 overflow-y-auto">
+      <div class="px-3 pt-3 pb-1 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">历史对话</div>
+      <template x-if="chat.sessions.length === 0">
+        <div class="px-3 py-6 text-center text-xs text-slate-400">暂无历史会话</div>
+      </template>
+      <template x-for="s in chat.sessions" :key="s.id">
+        <div class="flex items-start border-b border-slate-100/60 group transition"
+          :class="s.id === chat.sessionId ? 'bg-emerald-50 border-l-2 border-l-emerald-500' : 'hover:bg-white'">
+          <button @click="switchChatSession(s.id)" class="flex-1 text-left px-3 py-2.5 min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-[10px] px-1 py-0.5 rounded shrink-0"
+                :class="s.role === 'tool_guide' ? 'bg-purple-50 text-purple-500' : 'bg-blue-50 text-blue-500'"
+                x-text="s.role === 'tool_guide' ? '向导' : '助手'"></span>
+              <span class="text-xs font-medium text-slate-700 truncate flex-1"
+                x-text="s.preview || formatDate(s.last_active_at)"></span>
+            </div>
+            <div class="text-[10px] text-slate-400 mt-0.5" x-text="formatDate(s.last_active_at)"></div>
+          </button>
+          <!-- 删除按钮 -->
+          <button @click.stop="deleteChatSession(s.id)"
+            class="shrink-0 p-1.5 mt-0.5 mr-1 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded transition opacity-0 group-hover:opacity-100"
+            title="删除此会话">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24">
+              <path d="M3 6h18M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6m5 0V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2"/>
+            </svg>
+          </button>
+        </div>
+      </template>
+    </div>
+
+    <!-- 底部：删除当前会话 -->
+    <div class="p-3 border-t border-slate-200/60">
+      <button x-show="chat.sessionId" @click="deleteCurrentChat()"
+        class="w-full text-xs text-slate-400 hover:text-rose-500 px-2 py-1.5 rounded-lg hover:bg-rose-50 transition flex items-center justify-center gap-1.5">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M3 6h18M19 6l-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6m5 0V4a2 2 0 0 1 2-2h0a2 2 0 0 1 2 2v2"/></svg>
+        删除当前对话
+      </button>
+    </div>
+  </aside>
+
+  <!-- 右侧：对话区域 -->
+  <div class="flex-1 flex flex-col overflow-hidden">
+    <!-- 顶栏 -->
+    <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-2 shrink-0">
+      <div class="flex-1 min-w-0">
+        <template x-if="!chat.sessionId">
+          <span class="text-sm text-slate-400">选择左侧「新建对话」开始</span>
+        </template>
+        <template x-if="chat.sessionId">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-slate-700" x-text="chat.role === 'tool_guide' ? '工具向导' : 'Sharp 助手'"></span>
+            <span x-show="chat.projectId" class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200"
+              x-text="projects.find(p => p.id === chat.projectId)?.title?.slice(0,16) || '已关联项目'"></span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200">已就绪</span>
+          </div>
+        </template>
+      </div>
+    </header>
+
+    <!-- 消息列表 -->
+    <div class="flex-1 overflow-y-auto p-4 space-y-3" x-ref="chatMessages">
+      <template x-if="!chat.sessionId">
+        <div class="flex flex-col items-center justify-center h-full text-center text-slate-400 gap-3">
+          <svg class="w-12 h-12 opacity-30 mx-auto mb-3" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24">
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+          </svg>
+          <p class="text-sm">点击左侧「新建对话」开始</p>
+          <p class="text-xs mt-1">可选 Sharp 助手，或「工具向导」了解本工具用法</p>
+        </div>
+      </template>
+      <!-- 流式缓冲区实时渲染 -->
+      <template x-if="chat.streaming && chat.streamBuffer">
+        <div class="flex justify-start">
+          <div class="max-w-[85%] rounded-2xl rounded-tl-sm bg-white border border-slate-200 px-4 py-3 shadow-sm">
+            <div class="md-body text-slate-700 flex-1" x-html="renderMd(chat.streamBuffer)"></div>
+          </div>
+        </div>
+      </template>
+      <template x-for="msg in chat.messages" :key="msg.id">
+        <div :class="msg.role==='user' ? 'flex justify-end' : 'flex justify-start'">
+          <div :class="msg.role==='user'
+            ? 'max-w-[75%] rounded-2xl rounded-tr-sm bg-emerald-600 text-white px-4 py-2.5 text-sm'
+            : 'max-w-[85%] rounded-2xl rounded-tl-sm bg-white border border-slate-200 px-4 py-3 shadow-sm'">
+            <template x-if="msg.role==='assistant'">
+              <div class="md-body text-slate-700 flex-1" x-html="renderMd(msg.content)"></div>
+            </template>
+            <template x-if="msg.role==='user'">
+              <span x-text="msg.content"></span>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 输入框 -->
+    <div class="border-t border-slate-200 bg-white/80 backdrop-blur px-4 py-2.5 shrink-0">
+      <div class="max-w-3xl mx-auto">
+        <div class="flex items-end gap-2">
+          <textarea x-model="chat.input" rows="1" placeholder="输入消息… (Enter 发送，Shift+Enter 换行)"
+            class="flex-1 resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 max-h-32"
+            @keydown.enter.exact.prevent="sendChatMessage()"></textarea>
+          <template x-if="!chat.streaming">
+            <button @click="sendChatMessage()" :disabled="!chat.input.trim() || !chat.sessionId"
+              class="h-9 px-4 rounded-xl bg-emerald-600 text-white text-sm hover:bg-emerald-700 transition shrink-0 disabled:opacity-40">发送</button>
+          </template>
+          <template x-if="chat.streaming">
+            <button @click="stopChat()"
+              class="h-9 px-4 rounded-xl bg-rose-500 text-white text-sm hover:bg-rose-600 transition shrink-0">停止</button>
+          </template>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

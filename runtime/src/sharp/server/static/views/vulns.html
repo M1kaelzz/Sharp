@@ -1,0 +1,130 @@
+<div x-show="view === 'vulns'" x-cloak class="flex-1 flex flex-col overflow-hidden">
+  <header class="bg-white/80 backdrop-blur border-b border-slate-200/60 px-4 py-2.5 flex items-center gap-3 shrink-0">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <div class="h-8 w-8 rounded-lg border border-rose-200 bg-white shadow-sm shadow-rose-100/40 flex items-center justify-center shrink-0">
+        <svg class="w-5 h-5 text-rose-500" fill="none" stroke="currentColor" stroke-width="1.6" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      </div>
+      <span class="font-semibold text-slate-700 tracking-tight">漏洞库</span>
+      <span class="text-xs text-slate-400" x-show="selectedProjectId" x-text="`· ${project?.project?.title || selectedProjectId}`"></span>
+    </div>
+    <div class="flex-1"></div>
+    <!-- 筛选器 -->
+    <div class="flex items-center gap-2">
+      <select x-model="vulnFilter.kind" class="text-xs rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-slate-600 focus:border-brand-400 focus:ring-1 focus:ring-brand-300 outline-none">
+        <option value="all">全部类型</option>
+        <option value="vuln">漏洞</option>
+        <template x-if="isScoredProject()">
+          <option value="flag">旗帜（评分产物）</option>
+        </template>
+        <option value="finding">其他产物</option>
+      </select>
+      <select x-model="vulnFilter.severity" class="text-xs rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-slate-600 focus:border-brand-400 focus:ring-1 focus:ring-brand-300 outline-none">
+        <option value="all">全部严重度</option>
+        <option value="critical">严重</option>
+        <option value="high">高危</option>
+        <option value="medium">中危</option>
+        <option value="low">低危</option>
+        <option value="info">信息</option>
+      </select>
+      <select x-model="vulnFilter.status" class="text-xs rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-slate-600 focus:border-brand-400 focus:ring-1 focus:ring-brand-300 outline-none">
+        <option value="all">全部状态</option>
+        <option value="confirmed">已确认</option>
+        <option value="pending">待审</option>
+        <option value="dismissed">已忽略</option>
+      </select>
+      <button @click="selectedProjectId ? loadVulns(selectedProjectId) : loadAllVulns()"
+        class="text-xs px-2 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 transition">刷新</button>
+    </div>
+  </header>
+
+  <div class="flex-1 overflow-y-auto p-5">
+    <div class="max-w-7xl mx-auto">
+      <!-- 记分板（批次 B：评分类任务的旗帜得分） -->
+      <template x-if="isScoredProject() && scoreboard && scoreboard.flag_count > 0">
+        <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2.5 flex items-center gap-4">
+          <span class="text-sm font-semibold text-amber-800">🏁 旗帜记分</span>
+          <span class="text-sm text-amber-700">已获得 <b class="tabular-nums" x-text="scoreboard.flag_count"></b> 个</span>
+          <span class="text-sm text-amber-700">得分合计 <b class="tabular-nums" x-text="scoreboard.flag_score"></b></span>
+          <span class="text-[11px] text-amber-600" x-show="scoreboard.by_kind && scoreboard.by_kind.vuln">（另有 <span x-text="scoreboard.by_kind.vuln.count"></span> 条漏洞发现）</span>
+        </div>
+      </template>
+      <!-- 统计概览 -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+        <template x-for="sev in [
+          { key: 'critical', label: '严重', color: 'text-red-600', bg: 'bg-red-50', border: 'border-red-200' },
+          { key: 'high', label: '高危', color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-200' },
+          { key: 'medium', label: '中危', color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-200' },
+          { key: 'low', label: '低危', color: 'text-sky-600', bg: 'bg-sky-50', border: 'border-sky-200' },
+          { key: 'info', label: '信息', color: 'text-slate-600', bg: 'bg-slate-50', border: 'border-slate-200' },
+        ]" :key="sev.key">
+          <div :class="`${sev.bg} ${sev.border} border rounded-xl p-3.5`">
+            <div class="text-[11px] uppercase tracking-wider text-slate-400" x-text="sev.label"></div>
+            <div class="mt-1 text-2xl font-semibold tabular-nums" :class="sev.color"
+              x-text="(vulns || []).filter(v => v.severity === sev.key && v.status !== 'dismissed').length"></div>
+          </div>
+        </template>
+      </div>
+
+      <!-- 可交付性提示（P0-1）：有多少条结论还不能对外提交 -->
+      <div x-show="incompleteFindings().length > 0" class="rounded-xl border border-rose-200 bg-rose-50/60 px-4 py-2.5 text-xs text-rose-700">
+        ⚠️ <b x-text="incompleteFindings().length"></b> 条结论证据不足（缺原始请求/响应、复现步骤或影响说明）——报告会标注为"待补充验证"，不可直接对外提交。
+      </div>
+
+      <!-- 漏洞列表 -->
+      <template x-if="(vulns || []).length === 0 && !vulnsLoading">
+        <div class="text-center py-16 text-slate-400">
+          <svg class="w-12 h-12 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" stroke-width="1.2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <p class="text-sm">暂无漏洞记录</p>
+          <p class="text-xs mt-1">AI 在自动探索中确认的漏洞会出现在这里</p>
+        </div>
+      </template>
+
+      <template x-if="vulnsLoading">
+        <div class="text-center py-16 text-slate-400">
+          <div class="inline-block w-6 h-6 border-2 border-slate-200 border-t-brand-400 rounded-full animate-spin"></div>
+          <p class="text-sm mt-2">加载中...</p>
+        </div>
+      </template>
+
+      <div class="space-y-2">
+        <template x-for="v in filteredVulns()" :key="v.id + '_' + v.project_id">
+          <div @click="openVulnDetail(v)"
+            class="flex items-start gap-3 rounded-xl border border-slate-200/60 bg-white px-4 py-3 cursor-pointer hover:border-slate-300 hover:shadow-sm transition">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0 mt-0.5"
+              :class="vulnSeverityClass(v.severity)"
+              x-text="vulnSeverityLabel(v.severity)"></span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <template x-if="(v.kind || 'vuln') === 'flag'">
+                  <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-amber-200 bg-amber-50 text-amber-700 shrink-0">
+                    🏁 旗帜<span x-show="v.score" x-text="' · ' + v.score + ' 分'"></span>
+                  </span>
+                </template>
+                <template x-if="(v.kind || 'vuln') !== 'vuln' && (v.kind || '') !== 'flag'">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border border-slate-200 bg-slate-50 text-slate-500 shrink-0">其他产物</span>
+                </template>
+                <span class="text-sm font-semibold text-slate-700 truncate" x-text="v.title"></span>
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0"
+                  :class="vulnStatusClass(v.status)" x-text="vulnStatusLabel(v.status)"></span>
+                <!-- P0-1 可交付性：证据不齐的结论在列表里就能看见，不会混进报告 -->
+                <template x-if="v.quality && v.quality.applicable && !v.quality.complete">
+                  <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold border border-rose-200 bg-rose-50 text-rose-600 shrink-0"
+                    :title="qualityMissingText(v)">⚠ 证据不足</span>
+                </template>
+              </div>
+              <div class="mt-1 text-xs text-slate-400 flex items-center gap-2">
+                <span x-show="v.url" class="truncate max-w-md" x-text="v.url"></span>
+                <span x-show="v.url">·</span>
+                <span x-text="formatDate(v.created_at)"></span>
+              </div>
+              <p class="mt-1 text-xs text-slate-500 line-clamp-2" x-text="v.description"></p>
+            </div>
+            <div class="shrink-0 text-right">
+              <span class="text-[10px] text-slate-400" x-text="v.id"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
