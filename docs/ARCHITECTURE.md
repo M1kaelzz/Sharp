@@ -261,10 +261,10 @@ Sharp 由三个角色组成，靠 HTTP + 共享 SQLite 协作：
 **两阶段 execute→conclude**（bootstrap 和 explore 都有）：
 - 主阶段 `execute`：`timeout <N>s claude ... -p`，跑满超时或解析失败 → 进 conclude 兜底
 - 兜底阶段 `conclude`：`claude -r <session>` 复用同一会话，要求"停止探索、把已确认的总结成 fact"
-- 超时值在 `dispatch.yaml`：bootstrap 400s / explore 300s / conclude **180s**（可调）。
-  为什么 conclude 从 90s 提到 180s：**结论是唯一把一轮工作带回图里的通道**，实测 4 路并发下
+为什么 conclude 从 90s 提到 180s：**结论是唯一把一轮工作带回图里的通道**，实测 4 路并发下
   两次 conclude 被 `timeout` 杀在正好 90s（exit 124、stdout 全空）→ 整轮 5 分钟白干。
-  更彻底的做法是「conclude 单独重试一次」而不是整轮重来（容器 session 还在），留作后续。
+  更彻底的做法是「conclude 单独重试一次」而不是整轮重来（容器 session 还在）——
+  **已于 2026-10-19 实施，见下 P0-3 小节。**
 
 > ⚠️ **已知限制（曾导致卡死）**：若 agent 在 execute 阶段跑重型扫描（nuclei 全模板、sqlmap 高 level，单条十几分钟），会撞满 400s 超时被杀、产不出场景；项目停在初始态 → 无限重派 bootstrap。规避：Goal 里约束扫描量（轻量侦察优先），或调大 bootstrap 超时。详见 `MEMORY.md` 里的卡死诊断记录。
 
@@ -283,6 +283,22 @@ Sharp 由三个角色组成，靠 HTTP + 共享 SQLite 协作：
 - 设计要点：计数器**只在派发前检查**，不引入任何服务端状态/新 API；成功脱离初始态
   天然清零；与 reason-stall 共用"诊断 hint + 人工介入"语义，区别于 paused 字段
   （paused 是人工操作语义，AI 不写）。
+
+#### Conclude 单独重试（P0-3，2026-10-19，默认关闭）
+
+上文"conclude 失败即整轮白干"的**缓解机制**（两阶段 execute→conclude 的兜底加固）：
+
+- 开关：`tasks.bootstrap.conclude_retry` / `tasks.explore.conclude_retry`
+  （dispatch.yaml，`false`=关闭=历史行为）。
+- 语义：conclude 失败（超时 / 非零退出 / 响应解析失败）时，**同一 session、同一
+  prompt/argv 再跑一次**——`claude -r <session>` 下模型能看到自己被打断的响应并
+  修正；成本 ≤ 次个额外 conclude_timeout（180s），换来"整轮 5-7 分钟白丢概率大约减半"。
+- 不重试的三种终态：`cancelled`（取消）、心跳丢失（lease failure）、模型拒绝
+  （rejected——拒绝是语义决策，重试只是烧预算）。
+- 实现位置：`tasks/bootstrap.py` 与 `tasks/explore.py` 的 `_try_conclude_fallback`
+  各自把"单次尝试"包进 `for attempt in range(1, attempts+1)` 循环（`attempts` 由开关
+  决定）；**仅最终失败**才 `best_effort_release`，中间失败不释放（同一 session 还在跑）；
+  任一尝试成功走既有写结论路径，findings / 漏洞登记 / 环境基线 / 产品标注一条不丢。
 
 ### 3.1 高危操作人工审批闸门（Approval Gate，2026-08-27）
 

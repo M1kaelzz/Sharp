@@ -19,6 +19,37 @@ AIGC:
 
 ## 2026-10-19
 
+### P0-3｜Conclude 单独重试（默认关闭）
+
+**类别**：调度健壮性修复（消除"conclude 一次失败即整轮白干"已知限制）
+
+**背景**：`docs/ARCHITECTURE.md` §3 记录的"更彻底的做法是「conclude 单独重试一次」"
+TODO——conclude 是唯一把 5-7 分钟一轮的工作带回图里的通道，但 `_try_conclude_fallback`
+里 `result.timed_out or result.returncode != 0` 或 JSON 解析失败会**直接丢弃整轮**
+（release + `failed`），哪怕容器里的 session 还活着、`claude -r <session>` 续接能力已存在。
+
+**机制**：新增 `tasks.bootstrap.conclude_retry` / `tasks.explore.conclude_retry`
+（dispatch.yaml，默认 `false` = 关闭，旧行为逐字节不变）。启用时：
+
+- 两处 `_try_conclude_fallback` 的"单次尝试"改为"最多 2 次尝试"（`attempts = 2 if ... else 1`）；
+- 首次失败（超时 / 非零退出 / 回包解析失败）→ 记 WARNING（带 attempt 编号）→
+  **同一 session、同一 prompt/argv 重试一次**（模型能看见自己被打断的响应并修正）；
+- 取消（cancelled）与心跳丢失（lease failure）**绝不重试**；模型拒绝（rejected）也不重试
+  （拒绝是语义决策，重试只是烧预算）；
+- 仅**最终失败**才 `best_effort_release`（中间失败不释放——同一 session 还在继续跑）；
+- 任一尝试成功 → 走既有写结论路径，findings / 漏洞登记 / 环境基线 / 产品标注一条不丢。
+
+**改前行为**：conclude 失败一次 → 整轮作废（5-7 分钟白干，概率≈1/3，实测 exit-124 截断为主因）。
+**改后行为（启用时）**：失败先同 session 重试一次（成本 ≤ 1 个 conclude_timeout=180s），
+"白丢一轮"概率大约减半；**（默认关闭时）**与改前完全一致。
+**验证**：新增 `tests/test_conclude_retry.py`（8 用例：开关关闭回归单次语义、超时→重试成功、
+解析失败→重试成功、两次全败释放一次、拒绝不重试、重试成功 findings 照常入库、explore
+路径两例）+ 突变验证（把 `attempts = 2 if ... else 1` 摘成 `attempts = 1` → 4 个重试用例必须
+失败）+ 全量 739 用例全绿（731 基线 + 8 新增）+ `scripts/check_methods.py` 通过。
+**回滚**：`dispatch.yaml` 两个键设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P0-2｜Bootstrap 重派止损（默认关闭）
 
 **类别**：调度健壮性修复（消除"初始态无限重派 bootstrap"已知限制）
