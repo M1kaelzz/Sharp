@@ -19,6 +19,30 @@ AIGC:
 
 ## 2026-10-19
 
+### run.sh 一键式启动门面（CyberStrikeAI 风格）
+
+**来源**：用户要求启动体验对齐 CyberStrikeAI 的 `run.sh`；采用"薄壳门面 + 保留内核"
+设计（三决策均按推荐：默认桌面模式 / 不做 upgrade.sh / 清华镜像源）。
+
+**机制**：新增根目录 `run.sh`（POSIX bash，~180 行）——彩色横幅 + emoji helper →
+**启动前环境预检**（python3≥3.12 硬门槛对应 pyproject requires-python、uv 缺失给
+brew/curl 指引硬失败、Docker 未就绪**仅警告不阻塞**因 `web --no-dispatch` 仍可用）→
+`UV_DEFAULT_INDEX` 默认清华源**仅本次运行生效**（外部导出优先，不改系统配置）→
+`exec ./sharp "$@"` **全参数透传**（含 HA 第二实例 `dispatch --config`）；信号链直达
+监管者，Ctrl+C 干净停 server+dispatcher。**刻意不重写内核**：uv 发现/同步、密钥校验、
+docker 镜像构建、双进程 supervise、Windows 支持全部留在 `./sharp`（薄门面防重复实现
+漂移；Windows 用户继续 `./sharp`，零能力损失）。
+
+**验证**：新增 `tests/test_run_sh.py`（12 用例：bash -n 语法、严格模式/Run-Root 解析、
+python3.12 门槛与 pyproject 防漂移、Docker 检查 warning-only（剥 exit 1 守护）、uv 硬
+门槛含安装指引、镜像源可覆盖性、exec 全参透传、**薄壳反守护**（不得出现 uv sync/
+docker build/compose up）、无参不虚构子命令默认桌面、2 个突变守护（摘除 exec/摘除
+python 门槛 → 守护失败）+ 本地冒烟（doctor/--help 透传、Docker 警告正确显示）+ 全量
+896 全绿（884+12）。文档同步：README 快速开始、USAGE §4 启动方式（run.sh 表 +
+Windows 注记 + HA 交叉引用）。
+
+---
+
 ### 审计修复批次二（A1 短期 / B1 / B3 / B4）
 
 **来源**：收官审计 B 级 + A1 短期路径（A1 根治的宿主侧代理网关属架构决策，暂缓）。

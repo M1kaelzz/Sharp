@@ -185,6 +185,20 @@ workers:
 
 ## 4. 启动方式
 
+**推荐：`./run.sh`（一键式门面，POSIX）** —— 彩色横幅 + 启动前环境预检（python3≥3.12、
+uv 安装指引、Docker 未就绪仅警告不阻塞）+ 本次运行使用的清华 PyPI 镜像加速（外部
+`UV_DEFAULT_INDEX` 优先，不改系统配置），最后把全部参数透传给 `./sharp`（信号链直达，
+Ctrl+C 干净地停掉 server+dispatcher）：
+
+| 命令 | 说明 |
+|---|---|
+| `./run.sh` | 预检后启动桌面窗口模式（与 `./sharp` 默认一致） |
+| `./run.sh web` | 预检后启动浏览器模式 |
+| `./run.sh doctor` | 预检后运行环境诊断 |
+| `./run.sh dispatch --config dispatch.yaml` | 透传任意子命令（如批12 HA 第二实例） |
+
+Windows 用户或无 bash 环境请直接用下面的 `./sharp`（run.sh 只是薄门面，内核都在 `./sharp`）：
+
 | 命令 | 说明 |
 |---|---|
 | `./sharp` | 桌面窗口模式（默认，pywebview 打开独立窗口） |
@@ -198,6 +212,7 @@ workers:
 **端口**：默认 `8000`，如需修改可编辑启动器或使用 `--port` 参数。
 
 **单实例保护**：同时只能运行一个 Sharp 实例。端口被占时会给出明确提示。
+（开 HA 热备时可跑第二个 dispatcher，见 [§3.3 开关清单](#33-dispatchyaml-配置高级)。）
 
 ---
 

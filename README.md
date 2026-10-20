@@ -151,11 +151,13 @@ cd container && ./fetch_vendor.sh && docker build -t sharp-worker:latest . && cd
 # 注：naabu 上游未提供 linux/arm64 构建，arm64 镜像中不含它（Dockerfile 会自动跳过）；ripgrep 走 apt 安装
 
 # 3) 启动（首次会初始化管理员密码）
-./sharp
-# 浏览器打开 http://127.0.0.1:8000 ，或用桌面壳 ./sharp app
+./run.sh
+# 等价于 ./sharp（run.sh 是一键式门面：环境预检 + 镜像加速 + 全参数透传；
+# Windows 或无 bash 环境直接 ./sharp）
+# 浏览器打开 http://127.0.0.1:8000 ，或用桌面壳 ./run.sh app / ./sharp app
 ```
 
-诊断：`./sharp doctor`；命令一览：`./sharp --help`。
+诊断：`./run.sh doctor`（或 `./sharp doctor`）；命令一览：`./run.sh --help`。
 
 ### Worker 镜像环境搭建
 
@@ -246,3 +248,5 @@ python3 ../scripts/check_methods.py              # 前端 Alpine 方法完整性
 - 本开源包按 **AGPL-3.0** 发布，详见 `LICENSE`。
 - 另有**商业授权**（Ed25519 离线授权）用于桌面发行版，见 `docs/OPENSOURCE_RELEASE.md`。
 - 第三方组件许可见 `THIRD_PARTY_NOTICES.md`。
+
+> AI生成
