@@ -483,7 +483,17 @@ def ensure_worker_image(path: Path) -> None:
     if not image:
         return
     if not docker_available():
-        raise SystemExit("Docker daemon is not running. Start Docker Desktop, then retry.")
+        hint = "colima start"
+        try:
+            ctx = subprocess.run(
+                ["docker", "context", "show"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=10,
+            ).stdout.strip()
+            if "colima" not in ctx:
+                hint = "sudo systemctl start docker (Linux) / start your Docker engine"
+        except Exception:
+            pass
+        raise SystemExit(f"Docker daemon is not reachable. Start it first, then retry: {hint}")
     wanted = resolve_build_platform()
     # Arch check BEFORE existence: an existing image of the WRONG arch is a
     # silent qemu-emulation trap (e.g. a docker-load from an Intel colleague).

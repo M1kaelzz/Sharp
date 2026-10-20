@@ -154,7 +154,7 @@ flowchart LR
 
 ## 快速开始（macOS / Linux）
 
-前置：Python 3.12+、[uv](https://docs.astral.sh/uv/)、Docker Desktop（worker 容器需要）、一个模型 API token。
+前置：Python 3.12+、[uv](https://docs.astral.sh/uv/)、Docker 引擎（worker 容器需要；Desktop、colima、OrbStack 或 Linux 原生 docker 均可）、一个模型 API token。
 
 ```bash
 # 1) 配置模型凭据（Claude / OpenAI / Pi 三选一或都配）

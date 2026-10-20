@@ -102,15 +102,28 @@ check_docker() {
         warning "docker CLI not found — worker containers cannot run in this state"
         echo ""
         info "The web/API server still starts (web --no-dispatch); to fully run"
-        info " Sharp install Docker:"
-        echo "  macOS:   https://www.docker.com/products/docker-desktop/"
+        info " Sharp install a Docker engine (CLI or Desktop, your choice):"
+        echo "  macOS:   brew install colima docker   (lightweight CLI VM: 'colima start')"
+        echo "           brew install orbstack         (fast alternative)"
+        echo "           or Docker Desktop: https://www.docker.com/products/docker-desktop/"
         echo "  Ubuntu:  sudo apt-get install docker.io"
         echo "  CentOS:  sudo yum install docker"
         echo ""
         return 0
     fi
     if ! docker info >/dev/null 2>&1; then
-        warning "Docker daemon is not running — the launcher will fail on worker-image setup."
+        warning "Docker daemon is not reachable — the launcher will fail on worker-image setup."
+        # Point at the engine the user actually has, not a generic "Docker Desktop".
+        local start_hint="sudo systemctl start docker"
+        if docker context show 2>/dev/null | grep -q colima; then
+            start_hint="colima start"
+        elif command -v orb >/dev/null 2>&1; then
+            start_hint="orb start"
+        elif [ "$(uname -s)" = "Darwin" ] && [ ! -d "/Applications/Docker.app" ]; then
+            start_hint="sudo systemctl start docker (Linux) / start your Docker engine"
+        fi
+        info "Start the daemon first, then retry:"
+        echo "  $start_hint"
         # Arch preview does NOT need the daemon: vendor state is a file read.
         local vendor_arch
         if [ -f "$ROOT_DIR/container/vendor/.arch" ]; then
@@ -127,7 +140,6 @@ check_docker() {
         else
             info "vendor/ not fetched yet; first start with Docker on will auto-fetch ($host_arch expected) + build"
         fi
-        info "Start Docker Desktop (or 'sudo systemctl start docker'), then retry."
         return 0
     fi
     success "Docker daemon is running"

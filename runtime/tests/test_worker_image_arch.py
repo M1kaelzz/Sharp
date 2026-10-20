@@ -289,7 +289,11 @@ def test_build_failure_raises_actionable_system_exit(monkeypatch):
 def test_no_docker_raises(monkeypatch):
     monkeypatch.setattr(launcher, "docker_available", lambda: False)
     monkeypatch.setattr(launcher, "parse_worker_image", lambda p: "sharp-worker:latest")
-    with pytest.raises(SystemExit, match="Docker daemon is not running"):
+    monkeypatch.setattr(
+        launcher.subprocess, "run",
+        lambda cmd, **kw: types.SimpleNamespace(returncode=0, stdout="colima\n")
+    )
+    with pytest.raises(SystemExit, match="colima start"):
         launcher.ensure_worker_image(Path("dispatch.yaml"))
 
 

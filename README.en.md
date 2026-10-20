@@ -166,8 +166,8 @@ requests, cryptography. Test tools (pytest/httpx) are intentionally **not locked
 
 ## Quick start (macOS / Linux)
 
-Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker Desktop (for the worker
-container), and a model API token.
+Prerequisites: Python 3.12+, [uv](https://docs.astral.sh/uv/), a Docker engine (for the worker
+container — Desktop, colima, OrbStack, or native Linux docker all work), and a model API token.
 
 ```bash
 # 1) Configure model credentials (Claude / OpenAI / Pi — one or more)
