@@ -69,6 +69,10 @@ approval gate, and asset ledger (see `docs/USAGE.md` for full workflows):
 - **Worker containers**: one long-lived container per project; the Dispatcher injects agent commands
   via `docker exec`. Agents never talk to each other directly — they only read/write the same
   shared graph.
+- **Optional HA (hot standby)**: with `runtime.ha_standby` a second Dispatcher process may wait
+  on standby — liveness is arbitrated by a single lease row on the Server; if the active instance
+  dies the standby takes over within ~15s. Task claiming is already a server-side atomic CAS, so
+  takeover never double-runs tasks and there is no split brain.
 
 **Core data flow** (evidence→action loop):
 
@@ -100,6 +104,33 @@ flowchart LR
     AP -->|approved, run| A3
     A3 -->|produces| F3
 ```
+
+## Reliability · Cost · HA (mechanism upgrades)
+
+The three engineering pains of long-running batch work — **money-burning loops, invisible
+costs, single-point processes** — each have a mechanism layer. All are opt-in switches,
+**default off** (off = bit-for-bit legacy behavior); see `docs/USAGE.md` §3.3 for the full
+switch table and a recommended enable order.
+
+- **Loss limits & robustness**: bootstrap stall auto-pause with a diagnostic hint (no endless
+  re-dispatch); same-session conclude retry (a failed summary no longer discards a whole round);
+  dependency gate with a deadlock watchdog (`bootstrap_stall_threshold` / `conclude_retry` /
+  `intent_dependency_gate`).
+- **Cost & observability**: real token metering into `task_usage`; per-round task traces injected
+  into reason; deterministic pre-scan (httpx/nmap/katana before bootstrap — recon does not burn
+  LLM tokens); evidence auto-binding from observed output (`SHARP_TOKEN_METERING` /
+  `task_trace_archive` / `prescan_enabled` / `evidence_auto_bind`).
+- **Context efficiency**: graph summary truncated by distance-to-focus (the current evidence
+  chain stays full length); first-hand fact timestamps (`graph_distance_context` /
+  `fact_time_ordering`).
+- **Model split**: per-task-type env overrides — a strong model for reason, a cheap one for
+  explore, without duplicating worker entries (`task_env_overrides`).
+- **HA**: active-standby hot spare with a server-side lease; fail-open on transport errors (no
+  false takeover, no split brain) (`ha_standby` + `ha_takeover_after`).
+- **Outbound alerts** (server env, default off): sanitized plain-text IM webhook on high-severity
+  vuln creation (never carries evidence/reproduction text), and a per-task cost anomaly alert —
+  the early warning for a stolen worker token (the API token enters every project container via
+  env; give workers rate-limited keys).
 
 ## Tech stack
 
@@ -151,11 +182,13 @@ cd container && ./fetch_vendor.sh && docker build -t sharp-worker:latest . && cd
 # (the Dockerfile skips it automatically); ripgrep falls back to the apt package.
 
 # 3) Start (first run initializes the admin password)
-./sharp
-# Open http://127.0.0.1:8000 , or use the desktop shell: ./sharp app
+./run.sh
+# Same as ./sharp (run.sh is a thin one-click facade: pre-flight checks + mirror
+# acceleration + full arg passthrough; on Windows or without bash use ./sharp)
+# Open http://127.0.0.1:8000 , or use the desktop shell: ./run.sh app / ./sharp app
 ```
 
-Diagnostics: `./sharp doctor`. All commands: `./sharp --help`.
+Diagnostics: `./run.sh doctor` (or `./sharp doctor`). All commands: `./run.sh --help`.
 
 ### Building the worker image
 
@@ -249,3 +282,5 @@ python3 ../scripts/check_docs.py                 # docs ↔ code consistency
 AGPL-3.0 (`LICENSE`). Third-party components and their licenses: `THIRD_PARTY_NOTICES.md`.
 A commercial license (Ed25519 offline signing) covers the desktop distribution — see
 `docs/OPENSOURCE_RELEASE.md`.
+
+> AI生成

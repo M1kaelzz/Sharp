@@ -73,6 +73,7 @@ Sharp 面向三类授权测试对象，共享同一套证据—行动图、审�
 - **Server**（`runtime/src/sharp/server/`）：FastAPI 路由 + SQLite(WAL)。维护证据 / 行动 / 线索图，是协议真相源。前端和 Dispatcher 都通过它读写。
 - **Dispatcher**（`runtime/src/sharp/dispatcher/`）：独立进程，单线程调度循环。调度任务、管理生命周期、代 agent 调用 Server API 写图。**是 agent 派生 fact 的唯一写入方**（控制面）。
 - **Worker 容器**：每个项目一个长驻容器，Dispatcher 通过 `docker exec` 把 agent 命令注入执行。Agent 之间不直接通信，只读写同一张共享图。
+- **可选 HA 热备**：`runtime.ha_standby` 开启后允许第二个 Dispatcher 进程待命——活跃性由 Server 侧单行租约表裁决（进程视角 → 共享真相视角），活跃实例崩溃后 standby ≤15s 自动接管；任务认领本就是服务端原子 CAS，接管不会重复执行、无脑裂。
 
 **核心数据流**（证据 → 行动闭环）：
 
@@ -104,6 +105,22 @@ flowchart LR
     AP -->|通过后执行| A3
     A3 -->|产出| F3
 ```
+
+## 可靠性 · 成本 · 高可用（机制升级）
+
+长周期跑批的三大工程问题——**烧钱死循环、成本不可见、单点进程**——各有一层机制兜底。全部以开关提供、**默认关闭**（关闭时与历史行为逐字节一致）；推荐启用顺序（观测组先行）与每项完整说明见 `docs/USAGE.md` §3.3「调度行为开关清单」。
+
+| 层 | 机制 | 开关（`dispatch.yaml`） |
+|---|---|---|
+| **止损与鲁棒** | bootstrap 连败自动暂停并写诊断线索（不再无限重派烧钱）；conclude 失败同会话重试一次（砍掉整轮 5-7 分钟白干）；行动依赖链闸门（前置证据未落地不派发，附死锁看门狗） | `bootstrap_stall_threshold` / `tasks.*.conclude_retry` / `intent_dependency_gate` |
+| **成本与观测** | 真 token 计量（input/output/cache/成本落 `task_usage` 表）；任务轨迹归档并注入 reason（跨轮看到失败方向）；确定性预扫描（bootstrap 前 httpx/nmap/katana 种子 fact，侦察不烧 LLM）；发现缺证据自动回填观察片段 | `SHARP_TOKEN_METERING` / `task_trace_archive` / `prescan_enabled` / `evidence_auto_bind` |
+| **上下文效率** | 图摘要按「离当前焦点的图距离」截断（当前证据链全文、旁支压缩）；fact 第一手时间戳 + 按真实时间取最近 N 条 | `graph_distance_context` / `fact_time_ordering` |
+| **模型分工** | 任务类型级 env 覆盖：reason（低频规划）用强模型、explore（高频执行）用便宜模型，无需复制 worker 条目与凭据 | `task_env_overrides` |
+| **高可用** | Active-Standby 热备：server 侧租约裁决活跃实例，崩溃 ≤15s 自动接管；传输错误 fail-open（server 不可达时不误切、无脑裂） | `ha_standby` + `ha_takeover_after` |
+
+**外发通知**（服务端 env，默认关）：高危漏洞入库推送脱敏纯文本 IM 通知（企微/钉钉/飞书 webhook；**绝不携带 evidence/复现原文**，防凭据泄漏与注入，异步发送不阻塞入库）；单任务成本超阈值即时告警（**worker 凭据被盗刷的早期预警**——API token 经 env 注入容器，目标反制可窃取盗刷，建议给 worker 配限额 key）。
+
+> 每层机制有独立测试与突变验证守护（当前 896 用例全绿）；审计加固与回滚方式详见 `docs/CHANGELOG.md` 置顶条目。
 
 ## 技术栈
 
