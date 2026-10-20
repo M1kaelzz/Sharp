@@ -111,6 +111,22 @@ check_docker() {
     fi
     if ! docker info >/dev/null 2>&1; then
         warning "Docker daemon is not running — the launcher will fail on worker-image setup."
+        # Arch preview does NOT need the daemon: vendor state is a file read.
+        local vendor_arch
+        if [ -f "$ROOT_DIR/container/vendor/.arch" ]; then
+            vendor_arch="$(cat "$ROOT_DIR/container/vendor/.arch" 2>/dev/null | tr -d '[:space:]')"
+        fi
+        local host_arch
+        host_arch="$(uname -m | tr 'A-Z' 'a-z')"
+        case "$host_arch" in
+            x86_64|x64) host_arch=amd64 ;;
+            aarch64) host_arch=arm64 ;;
+        esac
+        if [ -n "$vendor_arch" ]; then
+            info "local worker image not checkable (daemon off); vendor/ is $vendor_arch — first start will build linux/$vendor_arch"
+        else
+            info "vendor/ not fetched yet; first start with Docker on will auto-fetch ($host_arch expected) + build"
+        fi
         info "Start Docker Desktop (or 'sudo systemctl start docker'), then retry."
         return 0
     fi
