@@ -145,59 +145,6 @@
       </div>
     </div>
 
-    <!-- 漏洞严重度环形图 + 发现趋势面积图 -->
-    <div x-show="vulnStats.total > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      <!-- SVG 环形图 -->
-      <div class="rounded-2xl border border-slate-200/60 bg-white p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-semibold text-slate-700">漏洞严重度分布</h3>
-          <span class="text-[11px] text-slate-400" x-text="`${vulnStats.total} 条已纳入`"></span>
-        </div>
-        <div class="flex items-center gap-6 flex-wrap">
-          <div class="relative shrink-0" style="width:160px;height:160px"
-            @mouseenter="donutHandleEnter($event)" @mouseover="donutHandleEnter($event)" @mouseleave="donutHandleLeave()">
-            <div x-html="vulnDonutSvg()"></div>
-            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span class="text-2xl font-semibold text-slate-800 tabular-nums" x-text="vulnDonutHover ? vulnDonutPaths().arcs.find(a => a.key === vulnDonutHover)?.value : vulnDonutPaths().dominantPct + '%'" x-show="vulnDonutPaths().total > 0"></span>
-              <span class="text-[10px] text-slate-400" x-text="vulnDonutHover ? (vulnDonutPaths().arcs.find(a => a.key === vulnDonutHover)?.label || '') : (vulnDonutPaths().dominantLabel || '总计')"></span>
-            </div>
-          </div>
-          <div class="flex flex-col gap-2 text-xs">
-            <template x-for="arc in vulnDonutPaths().arcs" :key="arc.key">
-              <div class="flex items-center gap-2 cursor-pointer rounded-lg px-1.5 py-0.5 transition" :class="vulnDonutHover === arc.key ? 'bg-slate-50' : ''"
-                @mouseenter="vulnDonutHover = arc.key" @mouseleave="vulnDonutHover = null">
-                <span class="w-3 h-3 rounded-full" :style="`background:${arc.color}`"></span>
-                <span class="text-slate-600" x-text="arc.label"></span>
-                <span class="tabular-nums font-semibold text-slate-700" x-text="arc.value"></span>
-                <span class="text-[10px] text-slate-400 tabular-nums" x-text="`${arc.pct}%`"></span>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <!-- SVG 趋势面积图 -->
-      <div class="rounded-2xl border border-slate-200/60 bg-white p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-semibold text-slate-700">漏洞发现趋势</h3>
-          <span class="text-[11px] text-slate-400">近 14 天</span>
-        </div>
-        <div class="relative">
-          <div x-html="vulnTrendSvg()"></div>
-          <!-- x 轴标签 -->
-          <div class="flex justify-between mt-1.5 px-1 text-[10px] text-slate-400 tabular-nums">
-            <template x-for="(lbl, i) in vulnTrendPaths().labels" :key="i">
-              <span x-show="i % 3 === 0 || i === vulnTrendPaths().labels.length - 1" x-text="lbl"></span>
-            </template>
-          </div>
-        </div>
-        <div class="mt-3 flex items-center gap-4 text-[11px] text-slate-500">
-          <span>峰值 <span class="font-semibold text-slate-700 tabular-nums" x-text="vulnTrendPaths().maxVal"></span> 个/天</span>
-          <span>总计 <span class="font-semibold text-slate-700 tabular-nums" x-text="vulnTrendData().reduce((a,b) => a + b.count, 0)"></span> 个</span>
-        </div>
-      </div>
-    </div>
-
     <!-- 状态分布 + 运行态 -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <div class="rounded-2xl border border-slate-200/60 bg-white p-5">

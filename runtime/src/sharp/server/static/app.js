@@ -100,6 +100,10 @@ function sharpApp() {
     // 空对象会让 .actor_name.trim() 抛错中断 init → 必须带默认初值
     localPrefs: { actor_name: '', layout_mode: 'dagre_tb', layout_dir: '' },
     pwForm: {},
+    // 修改密码的两个状态（设置页 x-text 直接读——漏声明会让按钮文字变空白，已由
+    // 前端状态守护测试锁定，勿删）
+    pwLoading: false,
+    pwError: '',
     dispatcherMode: 'anthropic',  // 设置页下拉默认（模板 x-model + x-if 面板依赖；'' 会导致面板全空）
 
     // ── 回放 / 图形（x-model 对象）──────────────────────────────────
@@ -151,6 +155,8 @@ function sharpApp() {
     dispatcherRestarting: false,
 
     // ── MCP / Dispatcher ────────────────────────────────────────────────
+    mcpSaving: false,          // MCP 保存中状态（保存按钮 x-text 依赖，漏声明=按钮空白）
+
     mcpServers: [],
     mcpEditor: { show: false, editing: null },
     dispatcherStatus: [],      // 数组：模板 x-for 遍历 dispatcher 状态条目
@@ -161,6 +167,7 @@ function sharpApp() {
     vulnStats: { total: 0, confirmed: 0, pending: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
     // 成本带（P1-3）：加载前 null（x-show 里判空前先判空值，未开计量时 total_calls=0 整体隐藏）
     usageSummary: null,
+    graphActionMenu: false,   // 图视图操作菜单开合（graph.html；历史上漏声明，由前端状态守护锁定）
     vulnDonutHover: null,
     _searchHits: [],
   };
