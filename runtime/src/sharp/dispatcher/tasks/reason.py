@@ -472,14 +472,22 @@ def run_reason_task(
             len(project.hints),
             len(open_intents),
         )
+        if config.runtime.graph_distance_context:
+            summarized_yaml = summarize_graph_yaml_by_distance(
+                export_yaml.strip(), focus_ids=("goal",)
+            )
+        elif config.runtime.fact_time_ordering:
+            summarized_yaml = summarize_graph_yaml(
+                export_yaml.strip(),
+                time_ordering=True,
+                fact_times={f.id: f.created_at for f in project.facts},
+            )
+        else:
+            summarized_yaml = summarize_graph_yaml(export_yaml.strip())
         snapshot = write_graph_snapshot(
             container_manager,
             container_name,
-            (
-                summarize_graph_yaml_by_distance(export_yaml.strip(), focus_ids=("goal",))
-                if config.runtime.graph_distance_context
-                else summarize_graph_yaml(export_yaml.strip())
-            ),
+            summarized_yaml,
             phase="reason_execute",
         )
         snapshot_dirs.append(snapshot.directory)

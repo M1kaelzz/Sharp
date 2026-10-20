@@ -19,6 +19,9 @@ class Fact(BaseModel):
     # the fact untrusted (do not feed it into conclusions / knowledge without
     # review). Default keeps legacy payloads valid.
     trusted: bool = True
+    # P2 fact timestamp (batch 10): first-hand creation time ('' = unknown /
+    # legacy row). Format matches intents.created_at (utcnow()).
+    created_at: str = ""
 
 
 class FactCorrectRequest(BaseModel):

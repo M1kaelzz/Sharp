@@ -135,12 +135,12 @@ def dispatch_static_analysis(body: DispatchStaticAnalysisRequest):
             projects_repo.insert(conn, project_id, seed["title"], now,
                                  target_kind="android", asset_ref=android_pkg)
             conn.execute(
-                "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-                ("origin", project_id, seed["origin"]),
+                "INSERT INTO facts (id, project_id, description, created_at) VALUES (?, ?, ?, ?)",
+                ("origin", project_id, seed["origin"], now),
             )
             conn.execute(
-                "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-                ("goal", project_id, seed["goal"]),
+                "INSERT INTO facts (id, project_id, description, created_at) VALUES (?, ?, ?, ?)",
+                ("goal", project_id, seed["goal"], now),
             )
             project_row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
             assert project_row is not None
@@ -148,8 +148,8 @@ def dispatch_static_analysis(body: DispatchStaticAnalysisRequest):
         fact_id = next_fact_id(conn, project_id)
         intent_id = next_intent_id(conn, project_id)
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-            (fact_id, project_id, fact_description),
+            "INSERT INTO facts (id, project_id, description, created_at) VALUES (?, ?, ?, ?)",
+            (fact_id, project_id, fact_description, now),
         )
 
         # 分析事实也是证据：与主链同一套副作用（台账 + 跨项目知识）。

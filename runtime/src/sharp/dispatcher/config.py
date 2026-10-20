@@ -240,6 +240,13 @@ class RuntimeConfig(BaseModel):
     # the evidence chain the current round depends on stays full length while
     # far-away facts are truncated.
     graph_distance_context: bool = False
+    # P2 fact timestamp ordering (default False = disabled, legacy behavior):
+    # when True, the legacy time-based graph summarizer picks the "most recent"
+    # facts by the facts' first-hand created_at timestamps (server-side batch 10
+    # column) instead of raw insertion order, so "keep recent 8" keeps what is
+    # actually newest. Only affects the legacy summarizer; when
+    # graph_distance_context is enabled the distance-based summarizer wins.
+    fact_time_ordering: bool = False
 
 
 class WorkerConfig(BaseModel):

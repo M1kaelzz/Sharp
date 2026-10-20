@@ -490,6 +490,15 @@ AI worker (explore.md prompt)
 - **纯文本**：`{"msgtype":"text","text":{"content":...}}`（企微/钉钉/飞书通用）；
 - **best-effort**：禁用/未配置/非高危不发送；发送失败仅记日志，永不阻塞漏洞入库。
 
+##### Fact 时间戳（P2，数据层 + `runtime.fact_time_ordering` 消费开关默认关）
+
+facts 表加第一手 `created_at TEXT NOT NULL DEFAULT ''`（老库 `_migrate` 幂等补列，
+老行保持 ''；全部写入点复用各自 `now` 填充；`Fact` model 带出）。消费点：
+`summarize_graph_yaml` 开启 `time_ordering` 时按 fact_times 映射（dispatcher 从
+`project.facts` 取 id→created_at）把"保留最近 N 条"从列表插入顺序改为真实时间戳
+排序（无时间戳视为最旧、列表位置 tie-break，全老库退化=旧行为）；输出保持原始
+顺序，仅截断对象变化。`graph_distance_context` 开启时距离模式优先（批8 覆盖批10）。
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线

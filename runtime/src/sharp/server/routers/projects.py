@@ -183,8 +183,8 @@ def create_project(body: CreateProjectRequest):
             target_kind=kind, asset_ref=asset_ref,
             task_mode=body.task_mode or "pentest",
         )
-        facts_repo.insert(conn, "origin", pid, body.origin)
-        facts_repo.insert(conn, "goal", pid, body.goal)
+        facts_repo.insert(conn, "origin", pid, body.origin, created_at=now)
+        facts_repo.insert(conn, "goal", pid, body.goal, created_at=now)
 
         hints = []
         if body.hints:
@@ -610,7 +610,7 @@ def reopen_project(project_id: str, body: ReopenRequest):
         creator = body.creator
 
         intents_repo.delete(conn, completion["id"], project_id)
-        facts_repo.insert(conn, fact_id, project_id, description)
+        facts_repo.insert(conn, fact_id, project_id, description, created_at=now)
         # 外部反馈也是证据：走统一副作用（台账 + 知识），否则重开后写进来的
         # 内容对后续项目毫无贡献
         from sharp.server.fact_hooks import after_fact_write

@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS facts (
     -- 0 = human marked it untrusted and it should not feed conclusions/knowledge
     -- without review. Every change is audited in fact_edits.
     trusted INTEGER NOT NULL DEFAULT 1,
+    -- P2 fact timestamp (batch 10): first-hand creation time. Older rows keep
+    -- '' (unknown); new writes fill it with the server's utcnow(), matching
+    -- intents.created_at's format.
+    created_at TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (id, project_id)
 );
 
@@ -475,6 +479,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # is created by the IF-NOT-EXISTS schema on every configure().
     if _table_exists(conn, "facts") and not _column_exists(conn, "facts", "trusted"):
         conn.execute("ALTER TABLE facts ADD COLUMN trusted INTEGER NOT NULL DEFAULT 1")
+    # P2 fact timestamp (batch 10): first-hand creation time on facts; older
+    # rows keep '' (unknown) so the column is additive-only.
+    if _table_exists(conn, "facts") and not _column_exists(conn, "facts", "created_at"):
+        conn.execute("ALTER TABLE facts ADD COLUMN created_at TEXT NOT NULL DEFAULT ''")
     # Emergency-mode fields on projects (single-user escape hatch, JWT-only).
     if _table_exists(conn, "projects"):
         for col, ddl in (

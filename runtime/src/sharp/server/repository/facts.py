@@ -11,11 +11,15 @@ import sqlite3
 
 
 def insert(
-    conn: sqlite3.Connection, fact_id: str, project_id: str, description: str
+    conn: sqlite3.Connection,
+    fact_id: str,
+    project_id: str,
+    description: str,
+    created_at: str = "",
 ) -> None:
     conn.execute(
-        "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-        (fact_id, project_id, description),
+        "INSERT INTO facts (id, project_id, description, created_at) VALUES (?, ?, ?, ?)",
+        (fact_id, project_id, description, created_at),
     )
 
 

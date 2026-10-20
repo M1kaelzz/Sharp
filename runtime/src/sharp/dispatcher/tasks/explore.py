@@ -126,14 +126,22 @@ def run_explore_task(
             best_effort_release(client, project.project.id, intent.id, worker.name)
             return "unhealthy"
 
+        if config.runtime.graph_distance_context:
+            summarized_yaml = summarize_graph_yaml_by_distance(
+                export_yaml.strip(), focus_ids=intent.from_
+            )
+        elif config.runtime.fact_time_ordering:
+            summarized_yaml = summarize_graph_yaml(
+                export_yaml.strip(),
+                time_ordering=True,
+                fact_times={f.id: f.created_at for f in project.facts},
+            )
+        else:
+            summarized_yaml = summarize_graph_yaml(export_yaml.strip())
         snapshot = write_graph_snapshot(
             container_manager,
             container_name,
-            (
-                summarize_graph_yaml_by_distance(export_yaml.strip(), focus_ids=intent.from_)
-                if config.runtime.graph_distance_context
-                else summarize_graph_yaml(export_yaml.strip())
-            ),
+            summarized_yaml,
             phase="explore_execute",
         )
         snapshot_dirs.append(snapshot.directory)
@@ -246,6 +254,9 @@ def run_explore_task(
                     cancellation,
                     snapshot_dirs,
                     evidence_buf,
+                    fact_times={f.id: f.created_at for f in project.facts}
+                    if config.runtime.fact_time_ordering
+                    else None,
                 )
             if kind == "rejected":
                 LOG.warning(
@@ -306,6 +317,9 @@ def run_explore_task(
                 cancellation,
                 snapshot_dirs,
                 evidence_buf,
+                fact_times={f.id: f.created_at for f in project.facts}
+                if config.runtime.fact_time_ordering
+                else None,
             )
         LOG.warning(
             "explore command failed project=%s intent=%s worker=%s code=%s execute_ms=%s total_ms=%s stdout_preview=%s stderr_preview=%s",
@@ -352,6 +366,7 @@ def _try_conclude_fallback(
     cancellation: TaskCancellation,
     snapshot_dirs: list[str],
     evidence_buffer=None,
+    fact_times: dict[str, str] | None = None,
 ) -> str:
     if not driver.supports_conclude() or not session:
         LOG.info(
@@ -390,14 +405,22 @@ def _try_conclude_fallback(
 
     container_name = container_manager.ensure_running(project_id)
 
+    if config.runtime.graph_distance_context:
+        summarized_yaml = summarize_graph_yaml_by_distance(
+            export_yaml.strip(), focus_ids=intent.from_
+        )
+    elif config.runtime.fact_time_ordering:
+        summarized_yaml = summarize_graph_yaml(
+            export_yaml.strip(),
+            time_ordering=True,
+            fact_times=fact_times,
+        )
+    else:
+        summarized_yaml = summarize_graph_yaml(export_yaml.strip())
     snapshot = write_graph_snapshot(
         container_manager,
         container_name,
-        (
-            summarize_graph_yaml_by_distance(export_yaml.strip(), focus_ids=intent.from_)
-            if config.runtime.graph_distance_context
-            else summarize_graph_yaml(export_yaml.strip())
-        ),
+        summarized_yaml,
         phase="explore_conclude",
     )
     snapshot_dirs.append(snapshot.directory)

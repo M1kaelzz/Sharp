@@ -285,8 +285,8 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
         fid = next_fact_id(conn, project_id)
 
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-            (fid, project_id, body.description),
+            "INSERT INTO facts (id, project_id, description, created_at) VALUES (?, ?, ?, ?)",
+            (fid, project_id, body.description, now),
         )
         if intents_repo.conclude(conn, intent_id, project_id, fid, body.worker, now) != 1:
             raise HTTPException(409, "Intent conclude lost race")

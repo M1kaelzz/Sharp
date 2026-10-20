@@ -86,6 +86,46 @@ finding 文本会带来**凭据泄漏**（evidence/reproduction 常含 token）�
 
 ---
 
+### P2｜Fact 时间戳（第一手 created_at + 摘要按真实时间排序）
+
+**类别**：图节点原生时间维度（让"最近 N 条"名副其实）
+
+**背景**：facts 表没有时间戳列（只有 id/project_id/description/trusted），时间是
+"借产出它的 intent 间接推断"——导致 ① 增量规划摘要声称的"保留最近 8 条"实际
+按**列表插入顺序**取（插入顺序 ≠ 时间顺序，名不副实）；② 审计/报告无法给出证据
+的产出时刻。intents 表早有 created_at，fact 作为图的核心节点却缺第一手时间。
+
+**机制**（两层）：
+
+1. **数据层（后向兼容，加列不加开关）**：`facts` 表加 `created_at TEXT NOT NULL
+   DEFAULT ''`（老库 `_migrate` 幂等补列，老行保持 `''`=未知，绝不伪造）；
+   `facts_repo.insert` 加 `created_at` 参数；**全部 10 处写入点**补时间戳（复用
+   各自已有的 `now`）：conclude 主路径、外部反馈、项目种子 origin/goal、安卓种子
+   ×3、小程序种子 ×3、安卓聊天、AI 报告上下文；`Fact` model 加 `created_at=""
+   `（默认空，旧 payload 兼容，ProjectDetail 序列化自动带出）。
+2. **消费点（`runtime.fact_time_ordering`，默认 `false`=旧行为）**：
+   `summarize_graph_yaml` 新增 `time_ordering` + `fact_times` 参数——开启时
+   dispatcher 用 `project.facts` 的 id→created_at 映射，把"保留最近 N 条"从
+   **列表顺序**改为**真实时间戳排序**（最新在前；无时间戳的老 fact 视为最旧，
+   列表位置作 tie-break，全老库时退化为与旧行为完全一致）；输出保持原始列表
+   顺序，只有"哪些 description 被截断"变化。三个调用点（reason_execute、
+   explore_execute、explore_conclude）按开关分支；`graph_distance_context`
+   同时开启时距离模式优先（批8 覆盖批10）。
+
+**改前行为**：fact 无时间维度；摘要"最近 N 条"按列表插入顺序。
+**改后行为（启用时）**：每个 fact 带第一手 created_at；摘要"最近 N 条"按真实时间。
+**（默认关闭时）**与基线完全一致（列存在但消费点不改）。
+**验证**：新增 `tests/test_fact_timestamp.py`（14 用例：新库建列、老库迁移幂等
+且老行保持 ''、repo insert 带/不带时间戳、项目种子 origin/goal 与 conclude 产物
+created_at（TestClient 端到端）、Fact model 旧 payload 兼容、时间排序保留真正最新
+（列表顺序打乱仍正确）、关闭=legacy 列表顺序、全无时间戳=与 legacy 逐字一致、
+fact_times 不开排序零影响、origin/goal 恒全文且输出顺序不变、低于阈值原样、
+config 默认关、调用点接线守护）+ 突变验证（摘除 time_ordering 分支 → 排序用例
+失败）+ 全量 831 用例全绿（817+14）+ check_methods/check_docs 通过。
+**回滚**：`fact_time_ordering` 设 `false`（数据层列保留，无副作用；或 `git revert`）。
+
+---
+
 ### P1-1｜证据自动绑定通道（默认关闭）
 
 **类别**：证据客观化（让漏洞证据从"模型自述"转向"观察事实"，P1-1 首版）

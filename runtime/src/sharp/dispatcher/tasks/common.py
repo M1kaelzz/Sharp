@@ -38,6 +38,8 @@ def summarize_graph_yaml(
     fact_threshold: int = GRAPH_SUMMARY_FACT_THRESHOLD,
     keep_recent: int = GRAPH_SUMMARY_KEEP_RECENT,
     truncate_chars: int = GRAPH_SUMMARY_TRUNCATE_CHARS,
+    time_ordering: bool = False,
+    fact_times: dict[str, str] | None = None,
 ) -> str:
     """Compress old fact descriptions in the graph YAML to reduce token consumption.
 
@@ -47,6 +49,14 @@ def summarize_graph_yaml(
       to *truncate_chars* with a ``[truncated]`` marker appended.
     - If the YAML cannot be parsed or the fact count is below the threshold,
       the original string is returned unchanged.
+
+    When ``time_ordering`` is True and ``fact_times`` (fact_id -> created_at)
+    is provided, "most recent" ranks by the facts' first-hand timestamps
+    (server-side batch 10 column) instead of YAML list order: timestamped facts
+    sort newest-first; untimestamped facts (''/missing, legacy rows) count as
+    the oldest, keeping their list order as tie-break (so an all-legacy graph
+    degrades to exactly the list-order behavior). The output keeps the original
+    fact order — only which descriptions get truncated changes.
     """
     import yaml
 
@@ -64,6 +74,34 @@ def summarize_graph_yaml(
 
     if len(regular_facts) <= max(fact_threshold, keep_recent):
         return graph_yaml
+
+    if time_ordering and fact_times is not None:
+        # Rank regular facts newest-first by first-hand created_at. Timestamped
+        # facts outrank untimestamped ones (legacy rows; '' or absent). Among
+        # untimestamped facts the later list position is treated as newer, so a
+        # graph with no timestamps degrades to the legacy list-order selection.
+        stamped: list[tuple[str, int]] = []
+        unstamped: list[int] = []
+        for pos, f in enumerate(regular_facts):
+            ts = fact_times.get(str(f.get("id", "")), "")
+            if ts:
+                stamped.append((ts, pos))
+            else:
+                unstamped.append(pos)
+        stamped.sort(key=lambda t: t[0], reverse=True)  # stable: ties keep list order
+        newest_first = [pos for _, pos in stamped] + sorted(unstamped, reverse=True)
+        keep_positions = set(newest_first[:keep_recent])
+        regular_index = 0
+        for f in facts:
+            if not isinstance(f, dict) or f.get("id") in special_ids:
+                continue
+            if regular_index not in keep_positions:
+                desc = f.get("description", "")
+                if isinstance(desc, str) and len(desc) > truncate_chars:
+                    f["description"] = desc[:truncate_chars].rstrip() + " [truncated]"
+            regular_index += 1
+
+        return yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
     # Truncate older facts (those before the most recent *keep_recent*).
     cutoff = len(regular_facts) - keep_recent

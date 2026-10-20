@@ -405,11 +405,12 @@ def push_fact(session_id: str, body: PushFactRequest):
             from sharp.server.services import next_fact_id, utcnow
 
             fact_id = next_fact_id(conn, body.project_id)
-            facts_repo.insert(conn, fact_id, body.project_id, body.content)
+            fact_now = utcnow()
+            facts_repo.insert(conn, fact_id, body.project_id, body.content, created_at=fact_now)
             # 与主链同一套副作用：从对话写进证据图的内容同样要进台账与知识库
             after_fact_write(
                 conn, project_id=body.project_id, fact_id=fact_id,
-                description=body.content, now=utcnow(),
+                description=body.content, now=fact_now,
             )
             return {"kind": "fact", "id": fact_id, "project_id": body.project_id}
 

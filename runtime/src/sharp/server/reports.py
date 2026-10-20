@@ -133,8 +133,8 @@ def create_engineered_report_draft_intent(
     # 只会往接口台账与知识库里灌垃圾。约定见 server/fact_hooks.py；
     # tests/test_fact_hooks.py 的结构断言里这是显式列出的例外。
     conn.execute(
-        "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
-        (fact_id, project_id, context),
+        "INSERT INTO facts (id, project_id, description, created_at) VALUES (?, ?, ?, ?)",
+        (fact_id, project_id, context, now),
     )
     conn.execute(
         "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, NULL, ?, ?, NULL, NULL, ?, NULL)",

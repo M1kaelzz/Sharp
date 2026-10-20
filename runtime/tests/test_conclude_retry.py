@@ -128,7 +128,9 @@ class FakeDriver:
 def _config(*, bootstrap_retry: bool, explore_retry: bool):
     return types.SimpleNamespace(
         runtime=types.SimpleNamespace(
-            prompt_group="default", graph_distance_context=False
+            prompt_group="default",
+            graph_distance_context=False,
+            fact_time_ordering=False,
         ),
         tasks=types.SimpleNamespace(
             bootstrap=types.SimpleNamespace(
