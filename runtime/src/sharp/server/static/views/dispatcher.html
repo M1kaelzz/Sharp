@@ -70,6 +70,9 @@
                 </div>
               </div>
               <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                <span x-show="entry.data?.ha?.enabled" x-cloak
+                  :class="entry.data?.ha?.active ? 'rounded-full bg-teal-50 text-teal-700 border border-teal-200 px-2 py-1 font-semibold' : 'rounded-full bg-slate-50 text-slate-500 border border-slate-200 px-2 py-1'"
+                  x-text="entry.data?.ha?.active ? '活跃 ACTIVE' : '待命 STANDBY'"></span>
                 <span x-show="dispatcherIsStale(entry.updated_at)" class="rounded-full bg-rose-50 text-rose-600 border border-rose-100 px-2 py-1">僵尸</span>
                 <span class="rounded-full bg-slate-100 px-2 py-1" x-text="`运行任务 ${entry.data.running_task_count || 0}/${entry.data.runtime?.max_workers || '-'}`"></span>
                 <span class="rounded-full bg-slate-100 px-2 py-1" x-text="`项目 ${entry.data.projects?.length || 0}`"></span>

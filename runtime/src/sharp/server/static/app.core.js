@@ -64,6 +64,7 @@ function applyCoreModule(obj) {
       await this.loadApprovals();   // 审批中心统计（含导航徽章），失败静默
       this.loadVulnStats();          // 全局漏洞分级统计（仪表盘环形图用），失败静默
       this.loadVulnTrend();          // 全局漏洞发现趋势（仪表盘面积图用），失败静默
+      this.loadUsageSummary();       // P1-3 成本带（仪表盘用量聚合），失败静默
       this.startPolling();
       // 每5秒刷新 _now，驱动心跳进度条/超时报警实时更新
       this._heartbeatTimer = setInterval(() => { this._now = Date.now(); this.markStaleIntents(); }, 5000);
@@ -639,6 +640,76 @@ function applyCoreModule(obj) {
     totalHighVulns() { return this._sum('vuln_high_count'); },
 
     // ── 仪表盘：漏洞严重度环形图 SVG arc path 计算 ──────────────────────────────
+    // —— 成本带：格式化与查询 ——
+    usageCostFmt(v) {
+      const n = Number(v || 0);
+      if (n >= 1000) return `$${(n / 1000).toFixed(1)}k`;
+      if (n >= 1) return `$${n.toFixed(2)}`;
+      return `$${n.toFixed(3)}`;
+    },
+    usageDeltaFmt() {
+      const s = this.usageSummary; if (!s) return '';
+      const d = s.today_cost_usd - s.yesterday_cost_usd;
+      return (d >= 0 ? '+' : '-') + this.usageCostFmt(Math.abs(d));
+    },
+    projectTitleById(pid) {
+      const p = (this.projects || []).find(p => (p.project && p.project.id === pid) || p.id === pid);
+      return p ? (p.title || (p.project && p.project.title) || pid) : pid;
+    },
+
+    // —— 成本带：任务类型环形图（复用 vulnDonut 的 SVG 弧算法）——
+    usageDonutPaths() {
+      const s = this.usageSummary;
+      if (!s || !s.by_task_type || !s.by_task_type.length) return { arcs: [], dominantPct: 0, dominantLabel: '' };
+      const rows = s.by_task_type;
+      const total = rows.reduce((a, r) => a + r.total_cost_usd, 0);
+      if (!total) return { arcs: [], dominantPct: 0, dominantLabel: '' };
+      const size = 130, r = size / 2, thickness = 18, inner = r - thickness, cx = r, cy = r;
+      const colors = { reason: '#0ea5e9', explore: '#f59e0b', bootstrap: '#8b5cf6', prescan: '#10b981' };
+      const labels = { reason: '规划', explore: '执行', bootstrap: '引导', prescan: '预扫描' };
+      let acc = 0; const arcs = [];
+      for (const row of rows) {
+        const val = row.total_cost_usd; if (!val) continue;
+        const from = acc / total, to = (acc + val) / total; acc += val;
+        const a0 = from * Math.PI * 2 - Math.PI / 2, a1 = to * Math.PI * 2 - Math.PI / 2;
+        const large = (to - from) > 0.5 ? 1 : 0;
+        const x0o = cx + r * Math.cos(a0), y0o = cy + r * Math.sin(a0);
+        const x1o = cx + r * Math.cos(a1), y1o = cy + r * Math.sin(a1);
+        const x0i = cx + inner * Math.cos(a0), y0i = cy + inner * Math.sin(a0);
+        const x1i = cx + inner * Math.cos(a1), y1i = cy + inner * Math.sin(a1);
+        const d = `M ${x0o.toFixed(2)} ${y0o.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1o.toFixed(2)} ${y1o.toFixed(2)} L ${x1i.toFixed(2)} ${y1i.toFixed(2)} A ${inner} ${inner} 0 ${large} 0 ${x0i.toFixed(2)} ${y0i.toFixed(2)} Z`;
+        arcs.push({ d, color: colors[row.key] || '#94a3b8', label: labels[row.key] || row.key, key: row.key, value: val, pct: Math.round(val / total * 100) });
+      }
+      const dom = rows.reduce((m, r) => r.total_cost_usd > m.total_cost_usd ? r : m, rows[0]);
+      return {
+        arcs, dominantPct: Math.round(dom.total_cost_usd / total * 100),
+        dominantLabel: labels[dom.key] || dom.key,
+      };
+    },
+    usageDonutSvg() {
+      const { arcs } = this.usageDonutPaths();
+      if (!arcs.length) return '';
+      return `<svg viewBox="0 0 130 130" class="w-[130px] h-[130px]">${arcs.map(a => `<path d="${a.d}" fill="${a.color}"></path>`).join('')}</svg>`;
+    },
+
+    // —— 成本带：7 天趋势 sparkline ——
+    usageTrendSvg() {
+      const s = this.usageSummary;
+      const pts = (s && s.trend) || [];
+      if (pts.length < 2 || pts.every(p => !p.total_cost_usd)) return '';
+      const w = 260, h = 56, pad = 4;
+      const maxV = Math.max(...pts.map(p => p.total_cost_usd), 0.0001);
+      const x = i => pad + (w - pad * 2) * (i / (pts.length - 1));
+      const y = v => h - pad - (h - pad * 2) * (v / maxV);
+      const line = pts.map((p, i) => `${i ? 'L' : 'M'} ${x(i).toFixed(1)} ${y(p.total_cost_usd).toFixed(1)}`).join(' ');
+      const area = `${line} L ${x(pts.length - 1).toFixed(1)} ${h - pad} L ${x(0).toFixed(1)} ${h - pad} Z`;
+      return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" class="w-full h-14">
+        <path d="${area}" fill="rgba(245,158,11,0.12)"></path>
+        <path d="${line}" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linejoin="round"></path>
+        <circle cx="${x(pts.length - 1).toFixed(1)}" cy="${y(pts[pts.length - 1].total_cost_usd).toFixed(1)}" r="2.5" fill="#f59e0b"></circle>
+      </svg>`;
+    },
+
     vulnDonutPaths() {
       const s = this.vulnStats;
       const total = s.total;
@@ -909,6 +980,11 @@ function applyCoreModule(obj) {
 
     async loadVulnTrend() {
       try { this.vulnTrend = await this.api('GET', '/vulnerabilities/trend?days=14'); } catch(e) { console.error(e); }
+    },
+
+    // P1-3 成本带：全局用量聚合（未开计量时 total_calls=0，成本带整体隐藏）
+    async loadUsageSummary() {
+      try { this.usageSummary = await this.api('GET', '/usage/summary?days=7'); } catch(e) { console.error(e); }
     },
 
     rememberProjectListScroll() {

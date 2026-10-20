@@ -101,6 +101,13 @@ function applyBoardModule(obj) {
     boardShowPriority(i) {
       return (i.priority || 0) > 0 && !i.to && !i.abandoned_at;
     },
+    // P0-1 依赖闸门：该行动仍在等待的前置证据（图里还不存在的 depends_on 项）。
+    // 有值的卡片显示 ⏳ 徽章，一眼看出谁被依赖链卡住（看门狗 hint 的入口上下文）。
+    intentMissingDeps(i) {
+      if (!i.depends_on || !i.depends_on.length) return [];
+      const known = new Set((this.project?.facts || []).map(f => f.id));
+      return i.depends_on.filter(d => !known.has(d));
+    },
     boardCardClass(i) {
       return this.selectedIntentId() === i.id
         ? 'border-brand-300 bg-brand-50/70 ring-1 ring-brand-100'

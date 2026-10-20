@@ -19,6 +19,39 @@ AIGC:
 
 ## 2026-10-19
 
+### 前端对接批次：成本带 + HA 徽章 + 依赖等待徽章
+
+**来源**：用户问"优化的这些项前端有对应功能点吗"→ 审计发现 5 个批次有 UI 缺口，
+按推荐做 P0+P1（token 计量可视化 + HA 角色徽章 + depends_on 等待徽章；P2 fact
+时间戳展示放弃）。
+
+**后端**：
+- `GET /usage/summary?days=N`（1-90 天窗口）：今日/昨日/累计金额（COALESCE 防御）、
+  by_task_type / by_model 桶（金额降序）、零填充趋势、烧钱 TOP3 项目（SQL 内排除
+  空项目，修复 Python 过滤后 LIMIT 名额被空行占掉的 bug）；空表全零返回（前端
+  据此隐藏整卡）；
+- `GET /projects/{id}/usage`：同型项目级聚合（404 校验；top_projects 恒空）；
+- `_status_snapshot` 增加 `data.ha{enabled,active}`——调度器状态页徽章数据源。
+
+**前端**（克制风格：单行高度成本带，复用 vulnDonut 弧算法）：
+- 仪表盘「模型用量成本」卡：累计+今日金额（较昨日 ↗↘ 对比色）、任务类型环形图
+  （reason 蓝/explore 琥珀/bootstrap 紫/prescan 绿）、7 天 sparkline 面积线、烧钱
+  TOP3（点击跳项目）——**模型分工（批11）的省钱效果在此一眼可验证**；
+- 调度器状态页：HA 实例加「活跃 ACTIVE / 待命 STANDBY」徽章（teal/灰）；
+- 行动板：被依赖闸门拦住的行为卡显示 ⏳ 等待前置证据徽章（missing depends_on，
+  看门狗 hint 的入口上下文）；
+- `app.js` 预置 `usageSummary: null`（修 Alpine 初始化 undefined warning）；
+  index.html 版本 v71→72；未开计量 `total_calls=0` 整卡隐藏。
+
+**验证**：`test_usage_dashboard.py` 11 用例（空表零值/聚合正确性/趋势零填充/
+TOP 截断与空项目排除/天数钳制/项目级 404 与隔离/写入路径环回/HA 字段源码守护/
+徽章视图守护）+ Playwright 实测（临时库造 184 行数据：API 返回与 UI 渲染金额、
+环形图、趋势、TOP 全部对上；Alpine undefined warning 修复前后对比）+
+check_methods/check_docs 通过 + 全量 940 全绿（929+11）。USAGE §8.6.1 新增
+成本带说明。
+
+---
+
 ### Worker 镜像架构自动感知（修硬编码 bug + 自动 vendor + 不匹配自动重建）
 
 **来源**：用户反馈 run.sh 不能自动识别内核拉对应镜像；调研发现比"没做"更重的

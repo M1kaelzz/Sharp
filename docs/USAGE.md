@@ -625,6 +625,15 @@ AI worker 在 explore 阶段确认漏洞后（通过布尔 oracle 协议验证�
 - 暂停时卡片显示紫色「调度暂停」徽章
 - 详情页标题栏图标变为 ⏸
 
+#### 8.6.1 模型用量成本带（仪表盘）
+
+开启 token 计量（`SHARP_TOKEN_METERING: "1"`，见 §3.3）后，仪表盘会出现「模型用量
+成本」卡片：**累计/今日金额**（较昨日对比）、**任务类型环形图**（reason/explore/
+bootstrap/prescan 分色——开启批11 `task_env_overrides` 模型分工后，此处一眼可见
+"explore 高频但便宜"的省钱效果）、**7 天趋势线**、**烧钱 TOP3 项目**（点击跳转）。
+未开计量（`task_usage` 无数据）时整卡隐藏，不占版面。项目级数据见
+`GET /projects/{id}/usage`（API）。
+
 ### 8.7 跨目标知识复用（2026-08-29；**2026-09-15 重做**）
 
 Sharp-v2 在探索过程中自动积累 credential / endpoint / fingerprint / **dead_end** 知识，跨项目复用。

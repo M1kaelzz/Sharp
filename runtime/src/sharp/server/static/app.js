@@ -159,6 +159,8 @@ function sharpApp() {
     // ── 漏洞 / Dashboard ────────────────────────────────────────────────
     // Dashboard/风险总览直接读 vulnStats.xxx —— 必须给零值对象而非 null
     vulnStats: { total: 0, confirmed: 0, pending: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+    // 成本带（P1-3）：加载前 null（x-show 里判空前先判空值，未开计量时 total_calls=0 整体隐藏）
+    usageSummary: null,
     vulnDonutHover: null,
     _searchHits: [],
   };

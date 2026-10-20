@@ -72,6 +72,79 @@
       </div>
     </div>
 
+    <!-- 成本带（P1-3 token 计量聚合；未开计量/无数据时整体隐藏） -->
+    <div x-show="usageSummary && usageSummary.total_calls > 0" x-cloak
+      class="rounded-2xl border border-slate-200/60 border-t-4 border-t-amber-300 bg-white p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-semibold text-slate-700">模型用量成本</h3>
+        <span class="text-[11px] text-slate-400 tabular-nums"
+          x-text="`${usageSummary.total_calls} 次调用`"></span>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- 金额卡 -->
+        <div class="flex flex-col justify-center gap-2">
+          <div class="flex items-baseline gap-2">
+            <span class="text-3xl font-semibold text-slate-800 tabular-nums"
+              x-text="usageCostFmt(usageSummary.total_cost_usd)"></span>
+            <span class="text-xs text-slate-400">累计</span>
+          </div>
+          <div class="flex items-center gap-3 text-xs tabular-nums">
+            <span class="text-slate-500">今日
+              <span class="font-semibold text-slate-700" x-text="usageCostFmt(usageSummary.today_cost_usd)"></span></span>
+            <span class="flex items-center gap-1"
+              :class="usageSummary.today_cost_usd > usageSummary.yesterday_cost_usd ? 'text-rose-500' : 'text-emerald-600'">
+              <span x-text="usageSummary.today_cost_usd > usageSummary.yesterday_cost_usd ? '↗' : '↘'"></span>
+              <span class="font-semibold" x-text="usageDeltaFmt()"></span>
+            </span>
+          </div>
+          <div class="text-[11px] text-slate-400">含缓存读写与估算成本，由任务计量上报</div>
+        </div>
+        <!-- 任务类型环形图 -->
+        <div class="flex items-center gap-5">
+          <div class="relative shrink-0" style="width:130px;height:130px">
+            <div x-html="usageDonutSvg()"></div>
+            <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span class="text-lg font-semibold text-slate-800 tabular-nums"
+                x-text="usageDonutPaths().dominantLabel || ''"></span>
+              <span class="text-[10px] text-slate-400"
+                x-text="`${usageDonutPaths().dominantPct || 0}% 用量占比`"></span>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1.5 text-xs min-w-0">
+            <template x-for="arc in usageDonutPaths().arcs" :key="arc.key">
+              <div class="flex items-center gap-2 rounded-lg px-1.5 py-0.5">
+                <span class="w-2.5 h-2.5 rounded-full shrink-0" :style="`background:${arc.color}`"></span>
+                <span class="text-slate-600" x-text="arc.label"></span>
+                <span class="tabular-nums font-semibold text-slate-700" x-text="usageCostFmt(arc.value)"></span>
+                <span class="text-[10px] text-slate-400 tabular-nums" x-text="`${arc.pct}%`"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+        <!-- 7 天趋势 + TOP 项目 -->
+        <div class="flex flex-col gap-3 min-w-0">
+          <div>
+            <svg class="w-full h-14" x-html="usageTrendSvg()"></svg>
+            <div class="flex justify-between text-[10px] text-slate-400 tabular-nums mt-0.5">
+              <span x-text="usageSummary.trend?.[0]?.day?.slice(5) || ''"></span>
+              <span x-text="usageSummary.trend?.[usageSummary.trend.length - 1]?.day?.slice(5) || ''"></span>
+            </div>
+          </div>
+          <div class="flex flex-col gap-1 text-xs min-w-0" x-show="usageSummary.top_projects.length > 0">
+            <span class="text-[11px] text-slate-400">烧钱 TOP 项目</span>
+            <template x-for="tp in usageSummary.top_projects" :key="tp.project_id">
+              <div class="flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-50 rounded-lg px-1.5 py-0.5 transition"
+                @click="openProject(tp.project_id)">
+                <span class="text-slate-600 truncate" x-text="projectTitleById(tp.project_id)"></span>
+                <span class="tabular-nums font-semibold text-slate-700 shrink-0"
+                  x-text="usageCostFmt(tp.total_cost_usd)"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 漏洞严重度环形图 + 发现趋势面积图 -->
     <div x-show="vulnStats.total > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <!-- SVG 环形图 -->

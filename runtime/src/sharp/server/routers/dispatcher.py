@@ -4,11 +4,13 @@ import json
 import os
 import shutil
 import signal
+import sqlite3
 import subprocess
 import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from sharp.server.db import get_conn
 from sharp.server.models import (
@@ -227,6 +229,267 @@ def list_task_traces(project_id: str, limit: int = 5):
             )
             for row in rows
         ]
+
+
+# ── P1-3 usage aggregation (dashboard cost band) ──────────────────────────
+# Aggregations over the task_usage rows the dispatcher reports. Read-only
+# observability; an empty table simply returns zeros/empty lists so the
+# frontend can hide the whole cost band when metering is off.
+
+
+class _UsageRow(BaseModel):
+    """One aggregated bucket (by task_type or by model)."""
+
+    key: str
+    total_cost_usd: float = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    calls: int = 0
+
+
+class _UsageTrendPoint(BaseModel):
+    day: str  # YYYY-MM-DD
+    total_cost_usd: float = 0
+    calls: int = 0
+
+
+class _UsageTopProject(BaseModel):
+    project_id: str
+    total_cost_usd: float = 0
+    calls: int = 0
+
+
+class UsageSummary(BaseModel):
+    """Global cost summary for the dashboard band (batch: cost band)."""
+
+    today_cost_usd: float = 0
+    yesterday_cost_usd: float = 0
+    total_cost_usd: float = 0
+    total_calls: int = 0
+    by_task_type: list[_UsageRow] = []
+    by_model: list[_UsageRow] = []
+    trend: list[_UsageTrendPoint] = []
+    top_projects: list[_UsageTopProject] = []
+
+
+def _usage_summary_from_conn(conn: sqlite3.Connection, days: int) -> UsageSummary:
+    """Aggregate task_usage rows. ``days`` bounds the trend/top windows; the
+    totals are all-time (the operator wants "how much in total, ever")."""
+    from datetime import datetime, timedelta, timezone
+
+    def _day(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%d")
+
+    now = datetime.now(timezone.utc)
+    today = _day(now)
+    yesterday = _day(now - timedelta(days=1))
+    window_start = _day(now - timedelta(days=days - 1))
+
+    def _cost(expr: str) -> str:
+        # COALESCE strips NULL costs (rows from gateways that return no usage).
+        return f"COALESCE(SUM(COALESCE({expr}, 0)), 0)"
+
+    scalar = conn.execute("SELECT created_at FROM task_usage ORDER BY id DESC LIMIT 1").fetchone()
+    has_rows = scalar is not None
+
+    today_cost = 0.0
+    yesterday_cost = 0.0
+    total_cost = 0.0
+    total_calls = 0
+    if has_rows:
+        row = conn.execute(
+            f"SELECT {_cost('total_cost_usd')} AS c FROM task_usage WHERE created_at LIKE ?",
+            (f"{today}%",),
+        ).fetchone()
+        today_cost = float(row["c"] or 0)
+        row = conn.execute(
+            f"SELECT {_cost('total_cost_usd')} AS c FROM task_usage WHERE created_at LIKE ?",
+            (f"{yesterday}%",),
+        ).fetchone()
+        yesterday_cost = float(row["c"] or 0)
+        row = conn.execute(f"SELECT {_cost('total_cost_usd')} AS c, COUNT(*) AS n FROM task_usage").fetchone()
+        total_cost = float(row["c"] or 0)
+        total_calls = int(row["n"] or 0)
+
+    def _buckets(group_by: str, limit: int) -> list[_UsageRow]:
+        if not has_rows:
+            return []
+        rows = conn.execute(
+            f"""
+            SELECT COALESCE({group_by}, '') AS k,
+                   {_cost('total_cost_usd')} AS c,
+                   COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS it,
+                   COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS ot,
+                   COUNT(*) AS n
+            FROM task_usage GROUP BY k ORDER BY c DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            _UsageRow(
+                key=(r["k"] or "-"),
+                total_cost_usd=round(float(r["c"] or 0), 4),
+                input_tokens=int(r["it"] or 0),
+                output_tokens=int(r["ot"] or 0),
+                calls=int(r["n"] or 0),
+            )
+            for r in rows
+        ]
+
+    trend: list[_UsageTrendPoint] = []
+    top: list[_UsageTopProject] = []
+    if has_rows:
+        rows = conn.execute(
+            f"""
+            SELECT substr(created_at, 1, 10) AS d,
+                   {_cost('total_cost_usd')} AS c,
+                   COUNT(*) AS n
+            FROM task_usage
+            WHERE substr(created_at, 1, 10) >= ?
+            GROUP BY d ORDER BY d
+            """,
+            (window_start,),
+        ).fetchall()
+        by_day = {r["d"]: (float(r["c"] or 0), int(r["n"] or 0)) for r in rows}
+        for i in range(days - 1, -1, -1):
+            d = _day(now - timedelta(days=i))
+            c, n = by_day.get(d, (0.0, 0))
+            trend.append(_UsageTrendPoint(day=d, total_cost_usd=round(c, 4), calls=n))
+
+        rows = conn.execute(
+            f"""
+            SELECT COALESCE(project_id, '') AS p,
+                   {_cost('total_cost_usd')} AS c,
+                   COUNT(*) AS n
+            FROM task_usage
+            WHERE substr(created_at, 1, 10) >= ? AND COALESCE(project_id, '') != ''
+            GROUP BY p ORDER BY c DESC LIMIT 3
+            """,
+            (window_start,),
+        ).fetchall()
+        top = [
+            _UsageTopProject(
+                project_id=r["p"],
+                total_cost_usd=round(float(r["c"] or 0), 4),
+                calls=int(r["n"] or 0),
+            )
+            for r in rows
+        ]
+
+    return UsageSummary(
+        today_cost_usd=round(today_cost, 4),
+        yesterday_cost_usd=round(yesterday_cost, 4),
+        total_cost_usd=round(total_cost, 4),
+        total_calls=total_calls,
+        by_task_type=_buckets("task_type", 8),
+        by_model=_buckets("model", 8),
+        trend=trend,
+        top_projects=top,
+    )
+
+
+@router.get("/usage/summary", response_model=UsageSummary)
+def usage_summary(days: int = 7):
+    """Dashboard cost band aggregation (batch: cost band). days is clamped
+    to [1, 90]; totals are all-time, trend/top use the window."""
+    days = max(1, min(days, 90))
+    with get_conn() as conn:
+        return _usage_summary_from_conn(conn, days)
+
+
+@router.get("/projects/{project_id}/usage", response_model=UsageSummary)
+def project_usage_summary(project_id: str, days: int = 7):
+    """Per-project cost detail (batch: cost band) — same shape as the global
+    summary but restricted to one project (top_projects is meaningless here
+    and stays empty)."""
+    from sharp.server.services import get_project_or_404
+
+    days = max(1, min(days, 90))
+    with get_conn() as conn:
+        get_project_or_404(conn, project_id)
+        # Temporarily scope by project via a one-off query path: reuse the
+        # aggregator against a filtered connection is complex, so aggregate
+        # inline with the same helpers.
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        today = now.strftime("%Y-%m-%d")
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        window_start = (now - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+
+        def _cost(expr: str) -> str:
+            return f"COALESCE(SUM(COALESCE({expr}, 0)), 0)"
+
+        row = conn.execute(
+            f"SELECT {_cost('total_cost_usd')} AS c, COUNT(*) AS n FROM task_usage WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        total_cost = float(row["c"] or 0)
+        total_calls = int(row["n"] or 0)
+
+        row = conn.execute(
+            f"SELECT {_cost('total_cost_usd')} AS c FROM task_usage WHERE project_id = ? AND created_at LIKE ?",
+            (project_id, f"{today}%"),
+        ).fetchone()
+        today_cost = float(row["c"] or 0)
+        row = conn.execute(
+            f"SELECT {_cost('total_cost_usd')} AS c FROM task_usage WHERE project_id = ? AND created_at LIKE ?",
+            (project_id, f"{yesterday}%"),
+        ).fetchone()
+        yesterday_cost = float(row["c"] or 0)
+
+        def _buckets(group_by: str, limit: int) -> list[_UsageRow]:
+            rows = conn.execute(
+                f"""
+                SELECT COALESCE({group_by}, '') AS k,
+                       {_cost('total_cost_usd')} AS c,
+                       COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS it,
+                       COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS ot,
+                       COUNT(*) AS n
+                FROM task_usage WHERE project_id = ?
+                GROUP BY k ORDER BY c DESC LIMIT ?
+                """,
+                (project_id, limit),
+            ).fetchall()
+            return [
+                _UsageRow(
+                    key=(r["k"] or "-"),
+                    total_cost_usd=round(float(r["c"] or 0), 4),
+                    input_tokens=int(r["it"] or 0),
+                    output_tokens=int(r["ot"] or 0),
+                    calls=int(r["n"] or 0),
+                )
+                for r in rows
+            ]
+
+        trend_rows = conn.execute(
+            f"""
+            SELECT substr(created_at, 1, 10) AS d,
+                   {_cost('total_cost_usd')} AS c,
+                   COUNT(*) AS n
+            FROM task_usage
+            WHERE project_id = ? AND substr(created_at, 1, 10) >= ?
+            GROUP BY d ORDER BY d
+            """,
+            (project_id, window_start),
+        ).fetchall()
+        by_day = {r["d"]: (float(r["c"] or 0), int(r["n"] or 0)) for r in trend_rows}
+        trend = []
+        for i in range(days - 1, -1, -1):
+            d = (now - timedelta(days=i)).strftime("%Y-%m-%d")
+            c, n = by_day.get(d, (0.0, 0))
+            trend.append(_UsageTrendPoint(day=d, total_cost_usd=round(c, 4), calls=n))
+
+        return UsageSummary(
+            today_cost_usd=round(today_cost, 4),
+            yesterday_cost_usd=round(yesterday_cost, 4),
+            total_cost_usd=round(total_cost, 4),
+            total_calls=total_calls,
+            by_task_type=_buckets("task_type", 8),
+            by_model=_buckets("model", 8),
+            trend=trend,
+            top_projects=[],
+        )
 
 
 def _load_status_data(raw: str) -> dict[str, Any]:

@@ -419,6 +419,11 @@
                         <span class="px-1.5 py-0.5 rounded-md bg-slate-100 text-[10px] font-mono text-slate-500" x-text="fid"></span>
                       </template>
                       <span x-show="(i.from || []).length > 3" class="text-[10px] text-slate-400" x-text="'+' + ((i.from || []).length - 3)"></span>
+                      <template x-if="intentMissingDeps(i).length">
+                        <span class="px-1.5 py-0.5 rounded-md bg-amber-50 text-[10px] font-mono text-amber-600 border border-amber-100"
+                          :title="'等待前置证据产出：' + intentMissingDeps(i).join(', ')"
+                          x-text="'⏳ ' + intentMissingDeps(i).slice(0, 2).join(' ') + (intentMissingDeps(i).length > 2 ? '…' : '')"></span>
+                      </template>
                       <template x-if="i.to">
                         <span class="px-1.5 py-0.5 rounded-md bg-teal-50 text-[10px] font-mono text-teal-600" x-text="'→ ' + i.to"></span>
                       </template>

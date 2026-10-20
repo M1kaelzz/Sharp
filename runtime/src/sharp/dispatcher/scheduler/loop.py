@@ -1742,6 +1742,12 @@ class DispatcherLoop:
         return {
             "config_path": str(self.config_path),
             "server": self.config.server,
+            # P2 HA: role this instance currently plays, so the dispatcher
+            # status page can badge active vs standby (batch: frontend HA).
+            "ha": {
+                "enabled": self._ha_enabled,
+                "active": self._ha_active,
+            },
             "runtime": {
                 "interval": self.config.runtime.interval,
                 "max_workers": self.config.runtime.max_workers,
