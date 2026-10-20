@@ -20,6 +20,8 @@ Pure function + mocked-requests test; no live server, no real webhook.
 
 from __future__ import annotations
 
+import threading
+
 import sharp.server.notifier as notifier
 from sharp.server.notifier import build_alert_message, send_high_risk_alert
 
@@ -127,14 +129,19 @@ def test_send_ineligible_severity_returns_false(monkeypatch):
 
 
 def test_send_high_risk_posts_plaintext_robot_shape(monkeypatch):
+    """Audit fix B1: the POST is async (daemon thread) — wait on an event
+    before asserting on the captured request."""
     _patch_env(monkeypatch)
     captured = {}
+    done = threading.Event()
 
     def fake_post(url, *, json, timeout, headers):
         captured["url"] = url
         captured["json"] = json
         captured["timeout"] = timeout
         captured["headers"] = headers
+        captured["thread"] = threading.current_thread().name
+        done.set()
         return None
 
     monkeypatch.setattr(notifier.requests, "post", fake_post)
@@ -143,7 +150,8 @@ def test_send_high_risk_posts_plaintext_robot_shape(monkeypatch):
         {"project_title": "Proj Nine", "title": "RCE", "severity": "critical",
          "kind": "vuln", "fact_id": "f1", "url": "http://t.example/"},
     )
-    assert ok is True
+    assert ok is True  # attempted synchronously (fire-and-forget)
+    assert done.wait(timeout=5), "webhook POST never ran"
     assert captured["url"] == "http://hook.invalid/x"
     assert captured["json"]["msgtype"] == "text"
     content = captured["json"]["text"]["content"]
@@ -152,24 +160,70 @@ def test_send_high_risk_posts_plaintext_robot_shape(monkeypatch):
     assert "f1" in content
 
 
+def test_send_post_runs_on_background_thread(monkeypatch):
+    """Audit fix B1: the HTTP send must NOT run on the caller's thread."""
+    _patch_env(monkeypatch)
+    captured = {}
+    done = threading.Event()
+
+    def fake_post(url, *, json, timeout, headers):
+        captured["thread"] = threading.current_thread().name
+        done.set()
+
+    monkeypatch.setattr(notifier.requests, "post", fake_post)
+    assert send_high_risk_alert("p", {"severity": "critical", "title": "x"}) is True
+    assert done.wait(timeout=5)
+    assert captured["thread"] == "sharp-alert-webhook"
+    assert captured["thread"] != threading.main_thread().name
+
+
+def test_custom_subject_flows_into_message(monkeypatch):
+    """Audit fix A1: the cost alert reuses the channel with its own subject."""
+    _patch_env(monkeypatch)
+    captured = {}
+    done = threading.Event()
+
+    def fake_post(url, *, json, **kwargs):
+        captured["json"] = json
+        done.set()
+
+    monkeypatch.setattr(notifier.requests, "post", fake_post)
+    assert send_high_risk_alert(
+        "p", {"severity": "critical", "title": "cost spike"}, subject="【Sharp 成本异常】"
+    ) is True
+    assert done.wait(timeout=5)
+    msg = captured["json"]["text"]["content"]
+    assert msg.startswith("【Sharp 成本异常】")
+    assert "高危漏洞" not in msg
+
+
 def test_send_webhook_failure_does_not_raise(monkeypatch):
     _patch_env(monkeypatch)
+    done = threading.Event()
 
     def boom(url, **kwargs):
+        done.set()
         raise RuntimeError("network down")
 
     monkeypatch.setattr(notifier.requests, "post", boom)
-    # Must not raise.
+    # Must not raise; the exception is swallowed inside the sender thread.
     assert send_high_risk_alert("proj", {"severity": "high", "title": "x"}) is True
+    assert done.wait(timeout=5)
 
 
 def test_send_eligible_custom_severity(monkeypatch):
     _patch_env(monkeypatch, severities=("critical",))
     calls = []
-    monkeypatch.setattr(notifier.requests, "post",
-                        lambda *a, **k: calls.append(1) or None)
+    done = threading.Event()
+
+    def fake_post(url, **kwargs):
+        calls.append(1)
+        done.set()
+
+    monkeypatch.setattr(notifier.requests, "post", fake_post)
     assert send_high_risk_alert("proj", {"severity": "critical", "title": "x"}) is True
+    assert done.wait(timeout=5)
     assert len(calls) == 1
-    # high not in custom set -> no post.
+    # high not in custom set -> no post spawned.
     assert send_high_risk_alert("proj", {"severity": "high", "title": "x"}) is False
     assert len(calls) == 1

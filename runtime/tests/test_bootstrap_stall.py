@@ -215,3 +215,83 @@ def test_user_hint_clears_stall_and_resumes():
     assert "p1" not in loop.bootstrap_stalled
     assert "p1" not in loop.bootstrap_fail_counts
     assert "p1" not in loop.bootstrap_stall_hint_counts
+
+# ── B4 (audit fix): stall rehydration after restart / HA takeover ───────────
+
+BOOTSTRAP_DIAG = (
+    "[Sharp 诊断] 引导任务已连续 2 次未产生任何结论。可能原因：初始侦察撞上执行超时……"
+)
+REASON_DIAG = (
+    "[Sharp 诊断] 已连续 2 轮探索未发现新进展。可能原因：目标有防护拦截……"
+)
+
+
+def _detail_with_last_hint(pid: str, content: str, creator: str, extra_after: int = 0) -> ProjectDetail:
+    hints = [
+        Hint(id="h_user", content="user hint", creator="user", created_at=TS),
+        Hint(id="h_diag", content=content, creator=creator, created_at=TS),
+    ] + [
+        Hint(id=f"h_post{i}", content=f"post hint {i}", creator="user", created_at=TS)
+        for i in range(extra_after)
+    ]
+    return ProjectDetail(
+        project=ProjectMeta(id=pid, title=pid, status="active", created_at=TS),
+        facts=[Fact(id="origin", description="o"), Fact(id="goal", description="g")],
+        intents=[_bootstrap_intent()],
+        hints=hints,
+    )
+
+
+def test_stall_rehydrated_after_restart_skips_bootstrap():
+    from sharp.dispatcher.scheduler.loop import STALL_HINT_CREATOR
+
+    # Fresh dicts = post-restart/failover state. The project's LAST hint is
+    # our bootstrap stall diagnostic (nothing from the operator after it).
+    detail = _detail_with_last_hint("p1", BOOTSTRAP_DIAG, STALL_HINT_CREATOR)
+    loop = _make_loop(RecordingClient(detail, threshold=2), threshold=2)
+    assert loop._bootstrap_dispatch_allowed(_summary("p1"), detail) is False
+    # And it stays skipped on subsequent ticks (idempotent rehydration).
+    assert loop._bootstrap_dispatch_allowed(_summary("p1"), detail) is False
+
+
+def test_stall_rehydrated_then_cleared_by_user_hint():
+    from sharp.dispatcher.scheduler.loop import STALL_HINT_CREATOR
+
+    detail = _detail_with_last_hint("p1", BOOTSTRAP_DIAG, STALL_HINT_CREATOR)
+    loop = _make_loop(RecordingClient(detail, threshold=2), threshold=2)
+    assert loop._bootstrap_dispatch_allowed(_summary("p1"), detail) is False
+    # Operator adds a hint after the diagnostic -> resume.
+    resumed = _detail_with_last_hint(
+        "p1", BOOTSTRAP_DIAG, STALL_HINT_CREATOR, extra_after=1
+    )
+    assert loop._bootstrap_dispatch_allowed(_summary("p1"), resumed) is True
+
+
+def test_operator_hint_after_diag_not_rehydrated():
+    from sharp.dispatcher.scheduler.loop import STALL_HINT_CREATOR
+
+    # The diagnostic exists but the user added a hint AFTER it: last hint is
+    # the user's -> not stalled (fresh instance must not resurrect the stall).
+    detail = _detail_with_last_hint("p1", BOOTSTRAP_DIAG, STALL_HINT_CREATOR, extra_after=1)
+    loop = _make_loop(RecordingClient(detail, threshold=2), threshold=2)
+    assert loop._bootstrap_dispatch_allowed(_summary("p1"), detail) is True
+
+
+def test_reason_stall_hint_does_not_rehydrate_bootstrap():
+    from sharp.dispatcher.scheduler.loop import STALL_HINT_CREATOR
+
+    # Same creator, different diagnostic (reason-stall): must NOT rehydrate
+    # the bootstrap stall — that reason project is not a bootstrap concern.
+    detail = _detail_with_last_hint("p1", REASON_DIAG, STALL_HINT_CREATOR)
+    loop = _make_loop(RecordingClient(detail, threshold=2), threshold=2)
+    assert loop._bootstrap_dispatch_allowed(_summary("p1"), detail) is True
+
+
+def test_stall_rehydration_off_when_threshold_zero():
+    from sharp.dispatcher.scheduler.loop import STALL_HINT_CREATOR
+
+    # Legacy feature-off: even with the diagnostic hint as the last hint,
+    # bootstrap dispatches (threshold=0 pass-through is bit-for-bit).
+    detail = _detail_with_last_hint("p1", BOOTSTRAP_DIAG, STALL_HINT_CREATOR)
+    loop = _make_loop(RecordingClient(detail, threshold=0), threshold=0)
+    assert loop._bootstrap_dispatch_allowed(_summary("p1"), detail) is True

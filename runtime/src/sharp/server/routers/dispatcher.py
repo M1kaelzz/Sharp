@@ -87,13 +87,58 @@ def delete_dispatcher_status(dispatcher_id: str):
     return None
 
 
+_COST_ALERT_SUBJECT = "【Sharp 成本异常】"
+
+
+def _cost_alert_threshold() -> float:
+    """Audit fix A1 (short-term): per-task cost threshold from operator env.
+
+    Reuses the batch-9 alert channel — a task_usage row above the threshold
+    pushes a sanitized alert (worker/model/phase/cost only), which is the early
+    warning for a drained or stolen worker token (worker containers receive the
+    API token via env, so a counter-RCE on the target can steal it and run up
+    the bill). Unset / unparsable / <= 0 disables the check (default, legacy).
+    """
+    raw = os.environ.get("SHARP_ALERT_COST_PER_TASK", "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
+def _alert_cost_anomaly(r, threshold: float) -> None:
+    """Best-effort cost anomaly alert for one usage row; never raises."""
+    from sharp.server.notifier import send_high_risk_alert
+
+    try:
+        send_high_risk_alert(
+            r.project_id,
+            {
+                "title": (
+                    f"任务成本 ${float(r.total_cost_usd):.2f} 超过阈值 ${threshold:.2f}"
+                    f"（worker={r.worker_name} model={r.model} phase={r.phase}）"
+                    "——疑似 token 被盗刷或超大上下文"
+                ),
+                "severity": "critical",  # flows the default SHARP_ALERT_SEVERITIES filter
+                "kind": r.task_type or "task",
+            },
+            subject=_COST_ALERT_SUBJECT,
+        )
+    except Exception:
+        pass  # never fail the usage write on an alert problem
+
+
 @router.post("/usage/record", status_code=204)
 def record_task_usage(body: TaskUsageRecords):
     """P1-3 real token metering: persist dispatcher-reported claude usage rows.
 
     Pure observability — nothing reads these rows to decide behavior, so a
     failure here must never surface to the task layer (the dispatcher client
-    already treats the write as best-effort).
+    already treats the write as best-effort). Audit fix A1 (short-term): when
+    SHARP_ALERT_COST_PER_TASK is set, rows above the threshold additionally
+    push a best-effort alert through the batch-9 channel after the insert.
     """
     now = utcnow()
     with get_conn() as conn:
@@ -116,6 +161,15 @@ def record_task_usage(body: TaskUsageRecords):
                 for r in body.records
             ],
         )
+    threshold = _cost_alert_threshold()
+    if threshold > 0:
+        for r in body.records:
+            try:
+                cost = float(r.total_cost_usd or 0.0)
+            except (TypeError, ValueError):
+                cost = 0.0
+            if cost > threshold:
+                _alert_cost_anomaly(r, threshold)
     return None
 
 

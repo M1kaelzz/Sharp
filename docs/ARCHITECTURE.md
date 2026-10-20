@@ -523,6 +523,14 @@ dispatch 机器锁（server 锁保持）；failover 时 in-flight 任务走既�
 `expire_workers` 心跳释放（与 crash 恢复同语义）。跨机 Active-Active 需容器编
 排层重写，非本批（ARTEX 用 PostgreSQL 重架构换）。
 
+**审计修复（2026-10，批次二）**：notify 的 HTTP POST 改 daemon 线程 fire-and-forget
+（慢 webhook 不再占 API 线程）；`POST /usage/record` 支持单任务成本异常告警
+（`SHARP_ALERT_COST_PER_TASK`，经批9 通道推【成本异常】——worker 容器凭据被盗刷的
+早期预警；A1 根治的宿主侧代理网关与"零代理直连"设计冲突，待架构决策）；依赖闸门内
+看门狗（同一意图阻塞同一 missing 集 ≥60s 写一次性诊断 hint，防 depends_on 死等死锁）；
+bootstrap 止损状态从最后一条诊断 hint 重水化（重启/HA 切换不再绕过止损，threshold=0
+行为不变）。
+
 **审计修复（2026-10）**：`POST /dispatcher/restart` 在 HA 下改为只定向停止 lease
 holder（从 dispatcher_id 解析本机 PID，8s 退出预算；优雅退出释放租约 → standby
 自动接管，`action: ha_standby_takeover`）；解析不了 PID / 不在本机 → 引导手动处理

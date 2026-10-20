@@ -18,13 +18,19 @@ Security posture (mirrors ARTEX audit lessons):
   read from the operator-owned environment (like ``server/risk.py``), never
   from worker-controlled data, so AI workers cannot redirect or disable alerts.
 - **Best-effort, non-blocking**: a send failure must never fail or slow the
-  vuln creation. Errors are logged and swallowed.
+  vuln creation. Errors are logged and swallowed. Audit fix B1: the HTTP POST
+  itself runs fire-and-forget on a daemon thread — a slow webhook endpoint
+  can no longer hold an API worker thread hostage.
 
 Config (operator env):
 - ``SHARP_ALERT_ENABLED`` — "1"/"true"/"on" enables; default off (legacy).
 - ``SHARP_ALERT_WEBHOOK`` — the robot HTTP URL to POST to.
 - ``SHARP_ALERT_SEVERITIES`` — comma-separated severities that trigger
   (default ``critical,high``).
+- ``SHARP_ALERT_COST_PER_TASK`` — per-task cost anomaly threshold in USD
+  (audit fix A1 short-term; a task_usage row above it triggers an alert on
+  the same channel — early warning for a drained/stolen worker token).
+  Unset/0 disables (default).
 
 The outgoing body follows the widely-supported plain-text robot shape:
 
@@ -35,6 +41,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import urllib.parse
 
 import requests
@@ -76,12 +83,18 @@ def _sanitize_title(title: str) -> str:
     return "".join(ch for ch in (title or "") if ch >= " ")
 
 
-def build_alert_message(project_title: str, project_id: str, body: dict) -> str:
-    """Build a plain-text alert message from a vuln create request body.
+def build_alert_message(
+    project_title: str,
+    project_id: str,
+    body: dict,
+    subject: str = "【Sharp 高危漏洞】",
+) -> str:
+    """Build a plain-text alert message from an alert body.
 
     ``body`` mirrors :class:`CreateVulnerabilityRequest` fields. Only safe,
     identifying fields are included; bodies that may contain secrets are never
-    copied into the message.
+    copied into the message. ``subject`` is the alert header line (the per-task
+    cost anomaly alert reuses this channel with its own subject).
     """
     title = _sanitize_title(body.get("title", ""))
     severity = (body.get("severity") or "").lower()
@@ -90,7 +103,7 @@ def build_alert_message(project_title: str, project_id: str, body: dict) -> str:
     url_host = _extract_host(body.get("url", ""))
 
     parts = [
-        "【Sharp 高危漏洞】",
+        subject,
         f"项目: {project_title} ({project_id})",
         f"严重度: {severity}",
         f"漏洞: {title}",
@@ -108,8 +121,31 @@ def _alert_eligible(severity: str) -> bool:
     return (severity or "").strip().lower() in ALERT_SEVERITIES
 
 
-def send_high_risk_alert(project_id: str, body: dict) -> bool:
+def _post_webhook(url: str, payload: dict) -> None:
+    """Single webhook POST. Audit fix B1: invoked on a daemon thread so a slow
+    webhook endpoint cannot block API worker threads. Failures logged+swallowed
+    (same non-raising contract as before)."""
+    try:
+        requests.post(
+            url,
+            json=payload,
+            timeout=WEBHOOK_TIMEOUT_SECS,
+            headers={"Content-Type": "application/json"},
+        )
+    except Exception:
+        LOG.warning("high-risk alert webhook send failed", exc_info=True)
+
+
+def send_high_risk_alert(
+    project_id: str, body: dict, subject: str = "【Sharp 高危漏洞】"
+) -> bool:
     """Best-effort push of a high-risk alert to the configured webhook.
+
+    Audit fix B1: only the message BUILD is synchronous (pure CPU); the HTTP
+    POST is dispatched fire-and-forget on a daemon thread, so even a hanging
+    webhook adds zero latency to the caller (create_vuln / usage-record).
+    Alert volume is naturally bounded (high-severity vuln creation / cost
+    anomalies), so one short-lived thread per alert is acceptable.
 
     Returns True when an alert was attempted (regardless of send result), False
     when disabled / unconfigured / ineligible. Never raises.
@@ -122,15 +158,12 @@ def send_high_risk_alert(project_id: str, body: dict) -> bool:
     # Locate the project title without blocking: caller provides it via
     # body.get("project_title") when available.
     project_title = _sanitize_title(body.get("project_title", ""))
-    message = build_alert_message(project_title, project_id, body)
+    message = build_alert_message(project_title, project_id, body, subject=subject)
     payload = {"msgtype": "text", "text": {"content": message}}
-    try:
-        requests.post(
-            ALERT_WEBHOOK,
-            json=payload,
-            timeout=WEBHOOK_TIMEOUT_SECS,
-            headers={"Content-Type": "application/json"},
-        )
-    except Exception:
-        LOG.warning("high-risk alert webhook send failed project=%s", project_id, exc_info=True)
+    threading.Thread(
+        target=_post_webhook,
+        args=(ALERT_WEBHOOK, payload),
+        name="sharp-alert-webhook",
+        daemon=True,
+    ).start()
     return True

@@ -478,10 +478,18 @@ operator webhook，让高危从"拉取"变"推送"。同样是脱敏端 env 作�
 | `SHARP_ALERT_ENABLED` | `false` | 通知总开关；`1`/`true`/`on` 启用 |
 | `SHARP_ALERT_WEBHOOK` | 空 | 企业 HTTP URL（企微/钉钉/飞书通用纯文本格式） |
 | `SHARP_ALERT_SEVERITIES` | `critical,high` | 触发通知的严重度逗号列表 |
+| `SHARP_ALERT_COST_PER_TASK` | 空（禁用） | 单任务成本异常阈值（美元）：task_usage 单行超过即推送【成本异常】告警（审计修复 A1）。例：`5.0` |
 
 > **脱敏保证**：通知只含项目名/id/severity/title/类型/URL 主机/fact id——**绝不携带
-> evidence/description/reproduction/impact**（可能带 token 或 markdown 注入）。发送失败
-> 仅记日志，不阻塞漏洞入库。
+> evidence/description/reproduction/impact**（可能带 token 或 markdown 注入）。发送
+> 在后台线程 fire-and-forget，慢 webhook 不会拖慢任务入库（审计修复 B1）。
+
+> **⚠️ Worker 容器凭据安全（审计 A1，务必读）**：API 凭经环境变量注入**每个项目容器**
+> ——若目标对容器发起反制（如 RCE），你的 API token 可能被窃取并被盗刷。建议：
+> ① **给 worker 用的 key 设置用量/速率限额**（在 API 提供方侧，不进代码）；
+> ② 开启 `SHARP_TOKEN_METERING` 计量 + `SHARP_ALERT_COST_PER_TASK` 告警，成本异常第一
+> 时间告警止损；③ 认真目标可单独使用低额度 key。凭据不出容器环境的彻底方案（宿主侧
+> 代理网关）与"直连、零代理"设计取舍，见架构文档。
 
 #### 审批流程
 

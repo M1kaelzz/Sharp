@@ -93,6 +93,10 @@ def _make_loop(gate: bool) -> DispatcherLoop:
     loop.config = types.SimpleNamespace(
         runtime=types.SimpleNamespace(intent_dependency_gate=gate)
     )
+    # Watchdog state (audit fix B3) used by the satisfied/blocked paths.
+    loop._dep_blocked = {}
+    loop._dep_hinted = set()
+    loop.client = HintRecordingClient()
     return loop
 
 
@@ -210,3 +214,140 @@ def test_create_intent_from_missing_fact_still_rejected(client):
         headers=_h(),
     )
     assert r.status_code == 404
+
+# ── B3 (audit fix): dependency-block watchdog ──────────────────────────────
+
+class HintRecordingClient:
+    """Fake SharpClient recording create_hint calls."""
+
+    def __init__(self):
+        self.hints: list[tuple[str, str, str]] = []
+
+    def create_hint(self, project_id, content, creator):
+        self.hints.append((project_id, content, creator))
+        return types.SimpleNamespace(ok=True)
+
+    def create_hint_failing(self, project_id, content, creator):
+        raise RuntimeError("server down")
+
+    def create_hint_rejected(self, project_id, content, creator):
+        return types.SimpleNamespace(ok=False)
+
+
+def _watch_loop(gate: bool, client) -> DispatcherLoop:
+    loop = DispatcherLoop.__new__(DispatcherLoop)
+    loop.config = types.SimpleNamespace(
+        runtime=types.SimpleNamespace(intent_dependency_gate=gate)
+    )
+    loop.client = client
+    loop._dep_blocked = {}
+    loop._dep_hinted = set()
+    return loop
+
+
+def test_watchdog_arms_then_hints_once_after_timeout(monkeypatch):
+    from sharp.dispatcher.scheduler import loop as loop_mod
+
+    client = HintRecordingClient()
+    lp = _watch_loop(True, client)
+    intent = _intent(depends_on=["f999"])
+    det = _detail()  # f999 does not exist
+
+    # First block: arms the timer, no hint yet.
+    assert lp._intent_dependencies_satisfied(det, intent) is False
+    assert client.hints == []
+
+    # Same block after the watchdog window: one hint, exactly once.
+    monkeypatch.setattr(loop_mod, "DEP_WATCHDOG_SECONDS", 0)
+    assert lp._intent_dependencies_satisfied(det, intent) is False
+    assert len(client.hints) == 1
+    pid, content, creator = client.hints[0]
+    assert pid == "p1"
+    assert "f999" in content and intent.id in content
+    assert creator == "dispatcher.stall_detector"
+
+    # Further ticks: one-shot, no duplicates.
+    assert lp._intent_dependencies_satisfied(det, intent) is False
+    assert len(client.hints) == 1
+
+
+def test_watchdog_no_hint_before_timeout(monkeypatch):
+    client = HintRecordingClient()
+    lp = _watch_loop(True, client)
+    intent = _intent(depends_on=["f999"])
+    det = _detail()
+    # Window still open (60s default, ticks are far apart in wall time):
+    assert lp._intent_dependencies_satisfied(det, intent) is False
+    # A second immediate tick is still within the window.
+    monkeypatch.setattr(
+        "sharp.dispatcher.scheduler.loop.DEP_WATCHDOG_SECONDS", 3600
+    )
+    assert lp._intent_dependencies_satisfied(det, intent) is False
+    assert client.hints == []
+
+
+def test_watchdog_cleared_when_deps_satisfied(monkeypatch):
+    from sharp.dispatcher.scheduler import loop as loop_mod
+
+    client = HintRecordingClient()
+    lp = _watch_loop(True, client)
+    intent = _intent(depends_on=["f999"])
+    blocked = _detail()
+    assert lp._intent_dependencies_satisfied(blocked, intent) is False
+
+    # Producer concluded: f999 exists now -> satisfied, state cleared.
+    satisfied = _detail(fact_ids=("origin", "goal", "f999"))
+    assert lp._intent_dependencies_satisfied(satisfied, intent) is True
+    assert lp._dep_blocked == {} and lp._dep_hinted == set()
+
+    # Re-block after satisfaction arms a FRESH timer (no immediate hint even
+    # at threshold 0 — evidence the state was really cleared).
+    monkeypatch.setattr(loop_mod, "DEP_WATCHDOG_SECONDS", 0)
+    assert lp._intent_dependencies_satisfied(blocked, intent) is False
+    assert client.hints == []
+
+
+def test_watchdog_rearms_when_missing_set_changes(monkeypatch):
+    from sharp.dispatcher.scheduler import loop as loop_mod
+
+    client = HintRecordingClient()
+    lp = _watch_loop(True, client)
+    monkeypatch.setattr(loop_mod, "DEP_WATCHDOG_SECONDS", 0)
+    det = _detail()
+
+    # Block on f999 -> armed -> fires.
+    assert lp._intent_dependencies_satisfied(det, _intent(depends_on=["f999"])) is False
+    assert lp._intent_dependencies_satisfied(det, _intent(depends_on=["f999"])) is False
+    assert len(client.hints) == 1
+
+    # Different missing set (f998): fresh timer, no instant re-fire.
+    assert lp._intent_dependencies_satisfied(det, _intent(depends_on=["f998"])) is False
+    assert len(client.hints) == 1
+
+
+def test_watchdog_gate_off_never_touches_state():
+    client = HintRecordingClient()
+    lp = _watch_loop(False, client)  # legacy: gate off
+    intent = _intent(depends_on=["f999"])
+    assert lp._intent_dependencies_satisfied(_detail(), intent) is True
+    assert client.hints == []
+    assert lp._dep_blocked == {} and lp._dep_hinted == set()
+
+
+def test_watchdog_hint_failure_swallowed(monkeypatch):
+    from sharp.dispatcher.scheduler import loop as loop_mod
+
+    class FailingHintClient(HintRecordingClient):
+        def create_hint(self, project_id, content, creator):
+            raise RuntimeError("server down")
+
+    client = FailingHintClient()
+    lp = _watch_loop(True, client)
+    monkeypatch.setattr(loop_mod, "DEP_WATCHDOG_SECONDS", 0)
+    det = _detail()
+    intent = _intent(depends_on=["f999"])
+    assert lp._intent_dependencies_satisfied(det, intent) is False  # armed
+    # Firing with a failing client must not raise into the dispatch path.
+    assert lp._intent_dependencies_satisfied(det, intent) is False
+    # Not marked hinted (retry next window).
+    assert lp._dep_hinted == set()

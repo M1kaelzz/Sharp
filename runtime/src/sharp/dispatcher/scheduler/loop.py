@@ -35,6 +35,15 @@ BOOTSTRAP_INTENT_CREATOR = "dispatcher.bootstrap"
 # until the user adds a new hint.
 REASON_STALL_THRESHOLD = 3
 STALL_HINT_CREATOR = "dispatcher.stall_detector"
+
+# Audit fix B3: how long a dependency-gated intent may stay blocked (deps
+# unsatisfied) before the dispatcher writes a ONE-SHOT diagnostic hint.
+# An intent can wait on a fact that nothing will ever produce (producer was
+# abandoned / dep id was hallucinated) — previously that was a silent
+# deadlock with no timeout and no warning. 60s ≈ 20 ticks at interval=3s.
+# Only active when runtime.intent_dependency_gate is on (default off), so the
+# legacy path never touches this state.
+DEP_WATCHDOG_SECONDS = 60
 # Maximum task runtime in seconds (1 hour). Tasks exceeding this will be forcibly cancelled.
 TASK_TIMEOUT_SECONDS = 3600
 # On shutdown, how long to wait for cancelled tasks to return before proceeding
@@ -130,6 +139,11 @@ class DispatcherLoop:
         # P2-3: tracks which projects have already received a budget-exhausted hint.
         self._budget_hint_written: set[str] = set()
         self._deadline_hint_written: set[str] = set()
+        # Audit fix B3: dependency-block watchdog state.
+        # key = (project_id, intent_id) -> (missing_signature, blocked_since);
+        # _dep_hinted suppresses duplicate hints for the same block.
+        self._dep_blocked: dict[tuple[str, str], tuple[frozenset, float]] = {}
+        self._dep_hinted: set[tuple[str, str]] = set()
         # P2 HA standby (batch 12): server-side active-lease arbitration. When
         # ha_standby is on, _ha_active reflects lease ownership and gates every
         # dispatch decision; off -> permanently True (legacy bit-for-bit).
@@ -577,7 +591,37 @@ class DispatcherLoop:
         """
         project_id = project.project.id
         if not self.bootstrap_stalled.get(project_id, False):
-            return True
+            # Audit fix B4: the stall dicts are process-local, but the
+            # diagnostic hint we wrote lives on the server — after a restart
+            # or HA takeover, rehydrate the stall state from it so a restart
+            # cannot be used to bypass the loss limit (the old code silently
+            # re-ran bootstrap threshold more times per restart). Only when
+            # the feature is on (threshold > 0); legacy threshold=0 stays
+            # bit-for-bit (never stalled). Content prefix distinguishes the
+            # bootstrap diagnostic from the reason-stall one (same creator).
+            if (
+                getattr(self.config.runtime, "bootstrap_stall_threshold", 0) > 0
+                and project.hints
+            ):
+                last = project.hints[-1]
+                if (
+                    getattr(last, "creator", "") == STALL_HINT_CREATOR
+                    and str(getattr(last, "content", "")).startswith(
+                        "[Sharp 诊断] 引导任务已连续"
+                    )
+                ):
+                    self.bootstrap_stalled[project_id] = True
+                    self.bootstrap_stall_hint_counts[project_id] = len(project.hints) - 1
+                    LOG.info(
+                        "bootstrap stall rehydrated from diagnostic hint project=%s hint_count=%s",
+                        project_id,
+                        len(project.hints),
+                    )
+                    # fall through to the stalled check below
+                else:
+                    return True
+            else:
+                return True
         stalled_at = self.bootstrap_stall_hint_counts.get(project_id)
         if stalled_at is None:
             # Stall flag set but no hint count recorded — defensive clear.
@@ -953,6 +997,7 @@ class DispatcherLoop:
         known = {fact.id for fact in project.facts}
         missing = [fid for fid in intent.depends_on if fid not in known]
         if missing:
+            self._dep_watchdog(project, intent, missing)
             LOG.debug(
                 "intent blocked by dependency project=%s intent=%s missing=%s",
                 project.project.id,
@@ -960,7 +1005,58 @@ class DispatcherLoop:
                 sorted(missing),
             )
             return False
+        # Satisfied (or no deps): clear any watchdog state for this intent.
+        key = (project.project.id, intent.id)
+        self._dep_blocked.pop(key, None)
+        self._dep_hinted.discard(key)
         return True
+
+    def _dep_watchdog(
+        self, project: ProjectDetail, intent: Intent, missing: list[str]
+    ) -> None:
+        """Audit fix B3: one-shot hint when an intent has been blocked on the
+        SAME missing deps for >= DEP_WATCHDOG_SECONDS. The producer intent may
+        have been abandoned or the dep ids hallucinated — without this the
+        intent is silently gated forever. Reason (and the operator) sees the
+        hint and can either propose the producer or abandon the intent. Never
+        raises into the dispatch path."""
+        key = (project.project.id, intent.id)
+        sig = frozenset(missing)
+        now = time.monotonic()
+        entry = self._dep_blocked.get(key)
+        if entry is None or entry[0] != sig:
+            # New block (or the missing set changed): arm the timer fresh.
+            self._dep_blocked[key] = (sig, now)
+            self._dep_hinted.discard(key)
+            return
+        if key in self._dep_hinted:
+            return
+        if now - entry[1] < DEP_WATCHDOG_SECONDS:
+            return
+        hint_content = (
+            f"[Sharp 诊断] 意图 {intent.id} 等待依赖证据 {sorted(missing)} 已超过 "
+            f"{DEP_WATCHDOG_SECONDS} 秒仍未产出。可能原因：产出该证据的前置意图失败或"
+            "被放弃、依赖的 fact 编号落空。\n"
+            "请补产出该证据的意图，或放弃（abandon）该意图。"
+        )
+        try:
+            response = self.client.create_hint(
+                project.project.id, hint_content, STALL_HINT_CREATOR
+            )
+            if response.ok:
+                self._dep_hinted.add(key)
+                LOG.warning(
+                    "dependency watchdog hint written project=%s intent=%s missing=%s",
+                    project.project.id,
+                    intent.id,
+                    sorted(missing),
+                )
+        except Exception:
+            LOG.exception(
+                "dependency watchdog hint failed project=%s intent=%s",
+                project.project.id,
+                intent.id,
+            )
 
     def _record_task_trace(self, task: RunningTask, outcome: str) -> None:
         """P1-4 worker process-level exchange: best-effort one-shot archive.

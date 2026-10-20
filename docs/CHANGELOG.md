@@ -19,6 +19,42 @@ AIGC:
 
 ## 2026-10-19
 
+### 审计修复批次二（A1 短期 / B1 / B3 / B4）
+
+**来源**：收官审计 B 级 + A1 短期路径（A1 根治的宿主侧代理网关属架构决策，暂缓）。
+
+**B1 — 高危通知同步阻塞**：`send_high_risk_alert` 原同步 `requests.post(5s)`——
+"非阻断"只保证不失败，不保证不等待，慢 webhook 会占住 API 线程池槽。修复：消息构建
+（纯 CPU）保持同步，HTTP POST 移入命名 daemon 线程 `sharp-alert-webhook`
+fire-and-forget，慢 webhook 对 create_vuln/usage-record 零延迟。回调语义不变。
+
+**A1 短期 — 单任务成本异常告警**：worker 容器凭据裸奔（API token 经 env 注入每个
+项目容器，目标反制 RCE 即可窃取盗刷）无法立即根治（代理网关与"零代理直连"设计冲突，
+需单独决策）。短期：`SHARP_ALERT_COST_PER_TASK`（美元，默认空=禁用）——
+`POST /usage/record` 落库后逐行检查，超阈值经批9 通道推送【成本异常】告警（severity
+=critical 走默认过滤；内容仅 worker/model/phase/成本/阈值，纯脱敏）。计量（批4）+
+告警组合成被盗刷的**早期预警**。USAGE 补容器凭据安全指引（限额 key/告警/低额度 key）。
+
+**B3 — 依赖死锁看门狗**：批3 `depends_on` 引用永远产不出的 fact（前置意图被放弃/编号
+落空）时静默死锁——闸门永远拦住、无超时无告警。修复：闸门（`intent_dependency_gate`
+开时）内加看门狗——同一意图阻塞同一 missing 集 ≥ `DEP_WATCHDOG_SECONDS`(60s) 写一条
+一次性诊断 hint（reason 可见→补产出意图或 abandon），missing 集变化重新计时，依赖满足
+即清状态，hint 失败静默重试下窗口。开关关=零触碰（默认 legacy）。
+
+**B4 — 止损状态重启存活**：批1 `bootstrap_stalled` 是进程内 dict，重启/HA 切换清零
+——"重启绕过止损"多烧 N×阈值轮。修复：`_bootstrap_dispatch_allowed` 发现项目最后一条
+hint 是引导止损诊断（creator=STALL_HINT_CREATOR 且内容前缀"引导任务已连续"）且操作员
+未再追加——重水化 stalled 状态（stall_hint_counts=len-1），语义与在线止损完全一致；
+操作员加 hint 照常恢复；threshold=0（关）行为逐字节不变。
+
+验证：新增/更新 21 用例（B1 异步事件等待+线程名守护+自定义subject、A1 8 例含阈值
+边界/解除路径/写入不受影响、B3 6 例含计时/一次性/重置/关闸/失败吞掉、B4 5 例含重水化/
+操作员恢复/诊断后插 hint/reason 诊断不误判/关闸不水化）+ 三处突变验证（B3 摘除→2 例
+失败、B4 摘除→2 例失败、A1 摘除门槛→2 例失败）+ 全量 884 全绿（863+21）+
+check_methods/check_docs 通过。
+
+---
+
 ### 审计修复批次（2026-10-20，12 批收官后全面审计 → A2 / A3 / C1）
 
 **来源**：收官审计发现 17 项缺陷，本次修复"立即"级三项。
