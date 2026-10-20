@@ -194,6 +194,15 @@ def restart_dispatcher(request: Request):
     status rows). Kill + wait, and let the launcher bring the dispatcher back
     (restart ``./sharp`` once — configuration changes require a process restart
     anyway).
+
+    HA mode (a non-expired active lease holder exists, i.e. runtime.ha_standby
+    is in use): blanket-killing every ``sharp dispatch`` process would also
+    take down the standby, creating an outage instead of a failover. Instead
+    only the ACTIVE instance (the lease holder) is stopped; its graceful
+    shutdown releases the lease and the standby takes over automatically —
+    no relaunch needed. The holder's local PID is parsed from its
+    dispatcher_id ("hostname:pid:config"); same-machine HA keeps server and
+    dispatchers on one host, so the PID is meaningful here.
     """
     import time as _time
 
@@ -206,6 +215,68 @@ def restart_dispatcher(request: Request):
             return [int(p) for p in result.stdout.strip().splitlines() if p.strip().isdigit()]
         except Exception:
             return []
+
+    def _ha_holder() -> str:
+        """Active (non-expired) lease holder, or '' in legacy/no-HA mode."""
+        try:
+            with get_conn() as conn:
+                row = conn.execute(
+                    "SELECT holder, expires_at FROM dispatcher_lease WHERE id = 1"
+                ).fetchone()
+        except Exception:
+            return ""
+        if row is None or not row["holder"]:
+            return ""
+        return row["holder"] if row["expires_at"] > utcnow() else ""
+
+    def _holder_pid(holder: str) -> int | None:
+        # dispatcher_id format: "{hostname}:{pid}:{config-name}" (loop.py
+        # __init__). Second-to-last colon-separated part is the pid.
+        parts = holder.split(":")
+        pid_text = parts[-2] if len(parts) >= 3 else ""
+        return int(pid_text) if pid_text.isdigit() else None
+
+    holder = _ha_holder()
+    if holder:
+        holder_pid = _holder_pid(holder)
+        if holder_pid is None:
+            return {
+                "signaled": 0, "spawned": False,
+                "message": f"HA 模式（活跃租约 {holder}），但无法解析其本机 PID；"
+                           "请手动停止该实例，standby 会自动接管。",
+            }
+        try:
+            os.kill(holder_pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            return {
+                "signaled": 0, "spawned": False,
+                "message": f"HA 模式：活跃实例 pid={holder_pid} 不在本机或无法停止；"
+                           "请手动处理，standby 会自动接管。",
+            }
+        # Bounded wait for the holder to exit (same budget as legacy mode).
+        deadline = _time.time() + 8.0
+        while _time.time() < deadline:
+            try:
+                os.kill(holder_pid, 0)
+            except (ProcessLookupError, PermissionError):
+                break
+            _time.sleep(0.3)
+        try:
+            os.kill(holder_pid, 0)
+            exited = False
+        except (ProcessLookupError, PermissionError):
+            exited = True
+        if not exited:
+            return {
+                "signaled": 1, "spawned": False,
+                "message": f"已向活跃实例 pid={holder_pid} 发出停止信号，但它仍在退出中"
+                           "（正在收敛在途任务）。standby 将在它释放租约后自动接管。",
+            }
+        return {
+            "signaled": 1, "spawned": False, "action": "ha_standby_takeover",
+            "message": "HA 模式：已停止活跃实例。它优雅退出时释放活跃租约，"
+                       "standby 将自动接管（无需重启 ./sharp）。",
+        }
 
     signaled = 0
     for pid in _pids():

@@ -523,6 +523,13 @@ dispatch 机器锁（server 锁保持）；failover 时 in-flight 任务走既�
 `expire_workers` 心跳释放（与 crash 恢复同语义）。跨机 Active-Active 需容器编
 排层重写，非本批（ARTEX 用 PostgreSQL 重架构换）。
 
+**审计修复（2026-10）**：`POST /dispatcher/restart` 在 HA 下改为只定向停止 lease
+holder（从 dispatcher_id 解析本机 PID，8s 退出预算；优雅退出释放租约 → standby
+自动接管，`action: ha_standby_takeover`）；解析不了 PID / 不在本机 → 引导手动处理
+不盲杀；legacy（无/过期租约）保持原 pgrep 行为。时间摘要 `summarize_graph_yaml`
+的 time_ordering 三桶分级：absent（双快照竞态窗口新 fact）→ 最新；有 created_at →
+时间倒序；映射内空串（批10 前老行）→ 最旧（列表序 tie-break，全旧库退化为旧行为）
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线

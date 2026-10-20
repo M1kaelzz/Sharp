@@ -229,6 +229,60 @@ def test_time_ordering_keeps_real_newest_truncates_older():
     assert d["f4"].endswith("[truncated]")
 
 
+def test_race_window_fact_absent_from_times_is_newest():
+    """Audit fix A3: a fact present in the YAML but ABSENT from fact_times was
+    created in the race window between the project-facts fetch and the export
+    fetch — it must rank as the NEWEST, never as oldest. The pre-fix code
+    lumped it with legacy '' rows and truncated the graph's newest fact."""
+    data = {
+        "facts": [
+            {"id": "origin", "description": LONG},
+            {"id": "goal", "description": LONG},
+            {"id": "f1", "description": LONG},   # TIMES: newest stamped (01-03)
+            {"id": "f2", "description": LONG},   # TIMES: oldest stamped (01-01)
+            {"id": "f4", "description": LONG},   # TIMES: legacy ''
+            {"id": "f_racy", "description": LONG},  # NOT in TIMES -> race window
+        ]
+    }
+    graph = yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    out = summarize_graph_yaml(
+        graph,
+        fact_threshold=3,
+        keep_recent=2,
+        truncate_chars=20,
+        time_ordering=True,
+        fact_times=TIMES,
+    )
+    d = _desc(out)
+    # keep_recent=2 -> the race-window fact (newest) + f1 (newest stamped) stay.
+    assert d["f_racy"] == LONG
+    assert d["f1"] == LONG
+    assert d["f2"].endswith("[truncated]")
+    assert d["f4"].endswith("[truncated]")  # '' in map = genuinely legacy-old
+
+
+def test_legacy_empty_ts_in_map_still_ranks_oldest():
+    """'' inside the map is a genuine pre-batch-10 row: still ranked oldest
+    (only ABSSENCE from the map means race-window-new, per audit fix A3)."""
+    times = {"f1": "2026-01-03T00:00:00Z", "f2": ""}
+    data = {
+        "facts": [
+            {"id": "origin", "description": LONG},
+            {"id": "goal", "description": LONG},
+            {"id": "f1", "description": LONG},
+            {"id": "f2", "description": LONG},
+        ]
+    }
+    graph = yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    out = summarize_graph_yaml(
+        graph, fact_threshold=1, keep_recent=1, truncate_chars=20,
+        time_ordering=True, fact_times=times,
+    )
+    d = _desc(out)
+    assert d["f1"] == LONG
+    assert d["f2"].endswith("[truncated]")
+
+
 def test_time_ordering_off_is_legacy_list_order():
     out = _summarize(_graph(), time_ordering=False)
     d = _desc(out)

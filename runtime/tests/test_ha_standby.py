@@ -264,3 +264,85 @@ def test_config_defaults_legacy():
 
     assert RuntimeConfig.model_fields["ha_standby"].default is False
     assert RuntimeConfig.model_fields["ha_takeover_after"].default == 15
+
+# ── 4. audit fix A2: restart endpoint under HA ─────────────────────────────
+
+def _post_restart(client):
+    return client.post("/dispatcher/restart", headers=_h())
+
+
+def test_restart_ha_mode_stops_only_holder_pid(client, monkeypatch):
+    """HA mode: the restart endpoint must stop ONLY the lease holder (parsed
+    from its dispatcher_id) — never blanket-kill the standby via pgrep."""
+    import signal as _signal
+
+    import sharp.server.routers.dispatcher as disp_mod
+
+    # Holder id in the "{host}:{pid}:{config}" format.
+    client.post(
+        "/dispatcher/lease",
+        json={"dispatcher_id": "hosta:4242:dispatch.yaml", "ttl_seconds": 60},
+        headers=_h(),
+    )
+
+    killed: set[int] = set()
+    kills: list[tuple[int, int]] = []
+
+    def fake_kill(pid, sig):
+        kills.append((pid, sig))
+        if sig == _signal.SIGTERM:
+            killed.add(pid)
+        elif sig == 0 and pid in killed:  # probe: holder has exited
+            raise ProcessLookupError("gone")
+
+    monkeypatch.setattr(disp_mod.os, "kill", fake_kill)
+
+    # pgrep must NOT be used in HA mode; if it were, this would blow up.
+    def no_subprocess(*a, **k):
+        raise AssertionError("pgrep must not run in HA mode")
+
+    monkeypatch.setattr(disp_mod.subprocess, "run", no_subprocess)
+
+    r = _post_restart(client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("action") == "ha_standby_takeover"
+    assert body["signaled"] == 1
+    assert all(pid == 4242 for pid, _ in kills), kills
+
+
+def test_restart_ha_mode_unparseable_holder_gives_guidance(client):
+    client.post(
+        "/dispatcher/lease",
+        json={"dispatcher_id": "weird-holder", "ttl_seconds": 60},
+        headers=_h(),
+    )
+    r = _post_restart(client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["signaled"] == 0
+    assert "手动" in body["message"]
+
+
+def test_restart_legacy_mode_keeps_pgrep_behavior(client, monkeypatch):
+    """No active lease (legacy single-instance mode): unchanged pgrep + relaunch
+    behavior — including an expired lease counting as legacy."""
+    import sharp.server.routers.dispatcher as disp_mod
+    import time as _time
+
+    # Expired lease must NOT route into the HA branch.
+    client.post(
+        "/dispatcher/lease",
+        json={"dispatcher_id": "hosta:9999:dispatch.yaml", "ttl_seconds": 1},
+        headers=_h(),
+    )
+    _time.sleep(1.2)
+
+    class FakeRun:
+        stdout = ""
+        returncode = 0
+
+    monkeypatch.setattr(disp_mod.subprocess, "run", lambda *a, **k: FakeRun())
+    r = _post_restart(client)
+    assert r.status_code == 200, r.text
+    assert r.json().get("action") == "relaunch_launcher"

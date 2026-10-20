@@ -53,10 +53,12 @@ def summarize_graph_yaml(
     When ``time_ordering`` is True and ``fact_times`` (fact_id -> created_at)
     is provided, "most recent" ranks by the facts' first-hand timestamps
     (server-side batch 10 column) instead of YAML list order: timestamped facts
-    sort newest-first; untimestamped facts (''/missing, legacy rows) count as
-    the oldest, keeping their list order as tie-break (so an all-legacy graph
-    degrades to exactly the list-order behavior). The output keeps the original
-    fact order — only which descriptions get truncated changes.
+    sort newest-first; facts absent from the map (created between the two
+    server fetches — the race window) are treated as the NEWEST (audit fix
+    A3); facts with an empty timestamp (legacy rows) count as the oldest,
+    keeping their list order as tie-break (so an all-legacy graph degrades to
+    exactly the list-order behavior). The output keeps the original fact
+    order — only which descriptions get truncated changes.
     """
     import yaml
 
@@ -76,20 +78,33 @@ def summarize_graph_yaml(
         return graph_yaml
 
     if time_ordering and fact_times is not None:
-        # Rank regular facts newest-first by first-hand created_at. Timestamped
-        # facts outrank untimestamped ones (legacy rows; '' or absent). Among
-        # untimestamped facts the later list position is treated as newer, so a
-        # graph with no timestamps degrades to the legacy list-order selection.
+        # Rank regular facts newest-first. Three pools (audit fix A3):
+        #   1. fresh — absent from fact_times: created in the race window
+        #      between the project-facts fetch and the export fetch, so newer
+        #      than everything in the map → ranked newest (the old code lumped
+        #      them with legacy rows and truncated the graph's NEWEST fact).
+        #   2. stamped — in fact_times with a real created_at → sorted ts desc
+        #      (stable: equal-second ties keep list order).
+        #   3. legacy — in fact_times with '' (pre-batch-10 rows) → oldest;
+        #      later list position treated as newer, so an all-legacy graph
+        #      degrades to the legacy list-order selection exactly.
         stamped: list[tuple[str, int]] = []
-        unstamped: list[int] = []
+        legacy: list[int] = []
+        fresh: list[int] = []
         for pos, f in enumerate(regular_facts):
-            ts = fact_times.get(str(f.get("id", "")), "")
-            if ts:
-                stamped.append((ts, pos))
+            fid = str(f.get("id", ""))
+            if fid not in fact_times:
+                fresh.append(pos)
+            elif fact_times[fid]:
+                stamped.append((fact_times[fid], pos))
             else:
-                unstamped.append(pos)
+                legacy.append(pos)
         stamped.sort(key=lambda t: t[0], reverse=True)  # stable: ties keep list order
-        newest_first = [pos for _, pos in stamped] + sorted(unstamped, reverse=True)
+        newest_first = (
+            sorted(fresh, reverse=True)
+            + [pos for _, pos in stamped]
+            + sorted(legacy, reverse=True)
+        )
         keep_positions = set(newest_first[:keep_recent])
         regular_index = 0
         for f in facts:

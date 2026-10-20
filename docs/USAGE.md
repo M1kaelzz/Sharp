@@ -141,6 +141,33 @@ workers:
 > 流量通道，既是供应链风险也是上手障碍。同理，`ANTHROPIC_AUTH_TOKEN` 走 `SHARP_ANTHROPIC_AUTH_TOKEN`
 > 环境变量注入，不写进配置文件。
 
+#### 调度行为开关清单（2026-10 改造批次）
+
+12 个优化批次全部**默认关闭**（关 = 与历史行为逐字节一致）。开关都写在 `runtime:` 段或
+`tasks:` 段，**读取一次于调度器启动**——改完需重启 dispatcher 生效：
+
+| 开关 | 默认 | 批次 | 作用 |
+|---|---|---|---|
+| `bootstrap_stall_threshold` | `0` | P0-2 | bootstrap 连续失败 N 次后暂停派发并写诊断 hint（0=旧的无限重派烧钱行为） |
+| `tasks.*.conclude_retry` | `false` | P0-3 | conclude 超时/坏输出后同一 session 重试一次，砍掉“整轮 5-7 分钟白干” |
+| `intent_dependency_gate` | `false` | P0-1 | 行动依赖链闸门：`depends_on` 前置证据未落地前不派发该行动 |
+| `task_trace_archive` | `false` | P1-4 | 每轮任务元数据归档 + reason 注入最近 5 条失败/成功轨迹（跨轮学习） |
+| `prescan_enabled` | `false` | P1-2 | bootstrap 前先跑确定性 httpx/nmap/katana 种子 fact（范围硬校验，省侦察 token） |
+| `evidence_auto_bind` | `false` | P1-1 | finding 缺 evidence 时自动从该 URL 的实际输出回填观察片段 |
+| `graph_distance_context` | `false` | P2-8 | 图摘要按“离当前焦点的图距离”截断（reason=goal，explore=当前行动证据链） |
+| `fact_time_ordering` | `false` | P2-10 | 图摘要“最近 N 条”按 fact 第一手 created_at 排序（而非列表顺序） |
+| `task_env_overrides` | `{}` | P2-11 | 任务类型级模型分工：reason 用强模型 / explore 用便宜模型，无需复制 worker |
+| `ha_standby` | `false` | P2-12 | Active-Standby 热备：可起第二个 dispatcher 进程，active 挂后 ≤15s 自动接管 |
+| `ha_takeover_after` | `15` | P2-12 | HA 租约接管等待秒数（≥3s；配合 `ha_standby`） |
+
+服务器侧（env，见 [§8.4](#84-高危行动与人工审批approval-gate)）：`SHARP_ALERT_*` 高危 IM 通知
+（默认关）；`common_env` 里 `SHARP_TOKEN_METERING=1` 开 token 计量。
+
+**推荐启用顺序**：先开**纯观测组**（`SHARP_TOKEN_METERING` → `fact_time_ordering` →
+`evidence_auto_bind`，不改变调度行为，只增数据），在 task_usage 数据基座上验证成本/证据质量收益，
+再开**调度行为组**（`conclude_retry` → `bootstrap_stall_threshold: 2` → `intent_dependency_gate`
+→ `prescan_enabled`），最后按需开 `graph_distance_context` / `task_env_overrides` / `ha_standby`。
+
 ### 3.4 首次启动
 
 ```bash
