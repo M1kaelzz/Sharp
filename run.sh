@@ -95,6 +95,8 @@ check_uv() {
 
 # Docker — WARNING only, never fatal: `run.sh web --no-dispatch` still works
 # for initial configuration, and the operator may start Docker later.
+# When the daemon IS running and the worker image exists, additionally report
+# the image-vs-host arch match (a wrong-arch image silently qemu-emulates).
 check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
         warning "docker CLI not found — worker containers cannot run in this state"
@@ -113,6 +115,35 @@ check_docker() {
         return 0
     fi
     success "Docker daemon is running"
+
+    # Arch match report (advisory only — the launcher enforces the real rebuild).
+    local image="sharp-worker:latest"
+    local img_arch daemon_arch vendor_arch
+    daemon_arch="$(docker version --format '{{.Server.Arch}}' 2>/dev/null | tr 'A-Z' 'a-z' || true)"
+    case "$daemon_arch" in
+        x86_64|x64) daemon_arch=amd64 ;;
+    esac
+    if [ -f "$ROOT_DIR/container/vendor/.arch" ]; then
+        vendor_arch="$(cat "$ROOT_DIR/container/vendor/.arch" 2>/dev/null | tr -d '[:space:]' || true)"
+    fi
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        if [ -n "$vendor_arch" ]; then
+            info "worker image not built yet (vendor: $vendor_arch) — the launcher will build linux/$vendor_arch on demand"
+        else
+            info "worker image not built yet — the launcher will build it on demand (arch auto-detected)"
+        fi
+        return 0
+    fi
+    img_arch="$(docker image inspect "$image" --format '{{.Architecture}}' 2>/dev/null | tr -d '[:space:]' || true)"
+    if [ -n "$daemon_arch" ] && [ "$img_arch" = "$daemon_arch" ]; then
+        success "worker image $image ($img_arch) matches the host"
+    elif [ -n "$vendor_arch" ] && [ "$img_arch" != "$vendor_arch" ]; then
+        warning "worker image $image is $img_arch but vendor/ is $vendor_arch — the launcher will rebuild ($vendor_arch)"
+    elif [ -n "$daemon_arch" ]; then
+        warning "worker image $image is ${img_arch:-unknown} on a $daemon_arch host — qemu emulation; the launcher will rebuild"
+    else
+        info "worker image $image present (${img_arch:-unknown})"
+    fi
 }
 
 # ---- Main --------------------------------------------------------------------

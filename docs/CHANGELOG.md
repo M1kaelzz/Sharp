@@ -19,6 +19,47 @@ AIGC:
 
 ## 2026-10-19
 
+### Worker 镜像架构自动感知（修硬编码 bug + 自动 vendor + 不匹配自动重建）
+
+**来源**：用户反馈 run.sh 不能自动识别内核拉对应镜像；调研发现比"没做"更重的
+**真 bug**——`./sharp` 启动器 `build_worker_image` **硬编码 `--platform linux/amd64`**
+（README 自己建议 Apple Silicon 用 arm64，launcher 却强制 amd64，自相矛盾）。四问题：
+A 硬编码平台；B 构建不看 vendor/.arch（arm64 vendor + amd64 镜像 = 容器内 exec format
+error，Dockerfile 注释自认"极难排查"）；C vendor 缺失不自动拉；D image_exists 只查名
+（同事 amd64 镜像 docker load 到 M 机全程 qemu 无提示）。
+
+**三决策（用户确认）**：镜像架构不匹配 → **自动重建**；vendor 自动拉取 → **默认开
++ 失败回落指引**；**不做**架构后缀双标签。
+
+**机制**（launcher，替换 70+ 行）：
+- **平台决策链** `resolve_build_platform()`：vendor/.arch 标记优先（混架构是 exec
+  format 地雷，宁可 qemu 也不冒险）→ 否则 **Docker daemon 架构**（`docker version
+  --format {{.Server.Arch}}`，非 uname——远程 docker context 下两者可能不同）；
+  vendor≠daemon 时跟随 vendor 并输出 qemu 提示 + 原生性能指引（不自动删用户产物）；
+- **vendor 自动预拉** `fetch_vendor_if_missing()`：无 .arch 标记时自动跑
+  `ARCH=<平台> ./fetch_vendor.sh`（透传 GH=/https_proxy=，脚本自带断点续传）；
+  失败仅提示"带现状继续构建"不阻塞（build 的 .arch 守卫仍是最后防线）；
+- **架构校验+自动重建** `ensure_worker_image()` 重排：`image_arch(inspect
+  --format {{.Architecture}})` 与目标平台**先比对再判存在**——不匹配自动重建并
+  打日志；匹配复用；任一侧架构未知**不误重建**（老镜像零骚扰）；
+- `build_worker_image` 传 `--platform linux/<平台>`，无法判定时省略（跟随默认）；
+- run.sh `check_docker` 尾部加**架构匹配报告**（advisory）：镜像缺失预告按需构建
+  架构；已有镜像输出 `matches the host` / `qemu emulation; rebuilding` / vendor
+  不一致提示；LAUNCHER_VERSION 更新 arch-aware-worker-image。
+
+**验证**：新增 `tests/test_worker_image_arch.py` 33 用例（normalize_arch 全拼写映射、
+vendor 优先/相等不警/不等警告保留 vendor、无 vendor 回落 daemon、无两者 None、
+daemon 用 docker version 非 uname、fetch noop/带 ARCH 与 cwd/失败 False/未知平台
+不 spawn、build 传参/省略、**硬编码突变守护**（源码禁 `"--platform","linux/amd64"`
+字面量）、错架构自动重建/匹配复用/未知不重建/缺失先拉后建/拉取失败继续建/建失败
+SystemExit 指引/无 docker 报错、**差分突变**（同一错架构场景 real 重建 vs 摘分支
+mutant 提前 return——翻转行为证明守护有效））+ run.sh 实测（doctor 冒烟 + 契约 12 例
+含加长后的 check_docker warning-only 守护）+ 全量 929 全绿（896+33）+
+check_methods/check_docs 通过。文档：README 双语步骤 2 改"可跳过，首启自动完成 +
+架构语义"。
+
+---
+
 ### run.sh 一键式启动门面（CyberStrikeAI 风格）
 
 **来源**：用户要求启动体验对齐 CyberStrikeAI 的 `run.sh`；采用"薄壳门面 + 保留内核"

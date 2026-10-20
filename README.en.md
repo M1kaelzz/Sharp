@@ -174,12 +174,16 @@ container), and a model API token.
 cp secrets.env.example datas/sharp/secrets.env
 $EDITOR datas/sharp/secrets.env        # set SHARP_ANTHROPIC_AUTH_TOKEN etc.
 
-# 2) Build the worker image (once, a few minutes, needs network)
+# 2) Build the worker image (OPTIONAL — the first ./run.sh does it automatically:
+#    detect arch -> fetch vendor -> build)
 cd container && ./fetch_vendor.sh && docker build -t sharp-worker:latest . && cd ..
-# On Apple Silicon build natively to skip qemu emulation:
-#   cd container && ARCH=arm64 ./fetch_vendor.sh && docker build --platform linux/arm64 -t sharp-worker:latest . && cd ..
+# Arch-aware: the vendor .arch marker takes priority, else the Docker daemon arch
+# (Apple Silicon automatically builds a native arm64 image, skipping qemu). An
+# existing image of the wrong arch is rebuilt automatically at startup.
+# Proxy options pass through: GH=https://ghfast.top/ ./fetch_vendor.sh
+# or https_proxy=http://127.0.0.1:7890 ./fetch_vendor.sh
 # Note: upstream publishes no linux/arm64 build of naabu, so the arm64 image omits it
-# (the Dockerfile skips it automatically); ripgrep falls back to the apt package.
+# (port scanning falls back to nmap).
 
 # 3) Start (first run initializes the admin password)
 ./run.sh
@@ -282,5 +286,3 @@ python3 ../scripts/check_docs.py                 # docs ↔ code consistency
 AGPL-3.0 (`LICENSE`). Third-party components and their licenses: `THIRD_PARTY_NOTICES.md`.
 A commercial license (Ed25519 offline signing) covers the desktop distribution — see
 `docs/OPENSOURCE_RELEASE.md`.
-
-> AI生成

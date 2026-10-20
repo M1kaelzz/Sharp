@@ -21,7 +21,7 @@ DEFAULT_CONFIG = ROOT / "dispatch.yaml"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_TITLE = "Sharp"
-LAUNCHER_VERSION = "2026-07-06-worker-pull-v2"
+LAUNCHER_VERSION = "2026-10-20-arch-aware-worker-image"
 SECRET_KEYS = ("SHARP_ANTHROPIC_AUTH_TOKEN",)
 
 
@@ -363,9 +363,119 @@ def docker_run(cmd: list[str]) -> bool:
     return subprocess.run(cmd, cwd=ROOT).returncode == 0
 
 
+# --- Worker image platform logic (arch-aware, replaces hardcoded amd64) -----
+
+def normalize_arch(raw: str | None) -> str | None:
+    """Map uname/docker arch spellings to the canonical 'amd64' / 'arm64'.
+
+    Returns None for anything unrecognized."""
+    value = (raw or "").strip().lower()
+    if value in ("amd64", "x86_64", "x64"):
+        return "amd64"
+    if value in ("arm64", "aarch64"):
+        return "arm64"
+    return None
+
+
+def read_vendor_arch() -> str | None:
+    """The arch marker written by container/fetch_vendor.sh (vendor/.arch)."""
+    marker = ROOT / "container" / "vendor" / ".arch"
+    try:
+        return normalize_arch(marker.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
+def docker_daemon_arch() -> str | None:
+    """Architecture of the DOCKER DAEMON (what containers actually run on).
+
+    Deliberately not uname: with a remote docker context the daemon arch may
+    differ from the local machine."""
+    try:
+        result = subprocess.run(
+            ["docker", "version", "--format", "{{.Server.Arch}}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return normalize_arch(result.stdout)
+
+
+def resolve_build_platform() -> str | None:
+    """Decide which linux platform the worker image should be built for.
+
+    Priority: the vendored binaries' arch (mixing them is an exec-format-error
+    landmine) > the docker daemon's arch. Returns 'amd64'/'arm64', or None
+    when neither can be determined (caller falls back, e.g. no --platform)."""
+    vendor = read_vendor_arch()
+    if vendor:
+        daemon = docker_daemon_arch()
+        if daemon and vendor != daemon:
+            print(
+                f"[sharp] note: vendor binaries are {vendor} but the docker daemon "
+                f"is {daemon}; building the {vendor} image (qemu emulation, scanners "
+                "run slower). For native speed: rm -rf container/vendor && cd container "
+                "&& ./fetch_vendor.sh && docker build -t sharp-worker:latest .",
+                flush=True,
+            )
+        return vendor
+    return docker_daemon_arch()
+
+
+def fetch_vendor_if_missing(platform: str | None) -> bool:
+    """Run container/fetch_vendor.sh when vendor/ has no arch marker yet.
+
+    Passes ARCH through and forwards GH= / https_proxy= so the operator's
+    proxy settings keep working. Returns True when vendor is present after the
+    call (already present, fetched, or platform unknown). Failure falls back
+    to the existing manual guidance (never blocks web --no-dispatch)."""
+    if read_vendor_arch() is not None:
+        return True  # already populated
+    if platform not in ("amd64", "arm64"):
+        return False
+    script = ROOT / "container" / "fetch_vendor.sh"
+    if not script.is_file():
+        return False
+    env = dict(os.environ)
+    env["ARCH"] = platform
+    print(f"[sharp] vendor binaries missing; fetching for {platform} ...", flush=True)
+    result = subprocess.run(["bash", str(script)], cwd=script.parent, env=env)
+    if result.returncode != 0:
+        return False
+    return read_vendor_arch() is not None
+
+
+def image_arch(image: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["docker", "image", "inspect", image, "--format", "{{.Architecture}}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return normalize_arch(result.stdout)
+
+
 def build_worker_image(image: str) -> bool:
     print(f"[sharp] building worker image {image} ...", flush=True)
-    return docker_run(["docker", "build", "--platform", "linux/amd64", "./container", "-t", image])
+    platform = resolve_build_platform()
+    cmd = ["docker", "build"]
+    if platform:
+        cmd += ["--platform", f"linux/{platform}"]
+    cmd += ["./container", "-t", image]
+    if platform:
+        print(f"[sharp] target platform: linux/{platform}", flush=True)
+    return docker_run(cmd)
 
 
 def ensure_worker_image(path: Path) -> None:
@@ -374,8 +484,25 @@ def ensure_worker_image(path: Path) -> None:
         return
     if not docker_available():
         raise SystemExit("Docker daemon is not running. Start Docker Desktop, then retry.")
+    wanted = resolve_build_platform()
+    # Arch check BEFORE existence: an existing image of the WRONG arch is a
+    # silent qemu-emulation trap (e.g. a docker-load from an Intel colleague).
     if image_exists(image):
-        return
+        current = image_arch(image)
+        if wanted and current and current != wanted:
+            print(
+                f"[sharp] worker image {image} is {current} but this machine wants "
+                f"{wanted}; rebuilding automatically (this may take a few minutes)...",
+                flush=True,
+            )
+        else:
+            return  # exists and matches (or arch unknown on either side)
+    if not fetch_vendor_if_missing(wanted):
+        print(
+            "[sharp] vendor fetch failed or unavailable; continuing the build with "
+            "whatever vendor/ currently contains (see the notes below if it fails).",
+            flush=True,
+        )
     if build_worker_image(image):
         return
     raise SystemExit(

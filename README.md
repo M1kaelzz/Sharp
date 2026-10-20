@@ -161,11 +161,12 @@ flowchart LR
 cp secrets.env.example datas/sharp/secrets.env
 $EDITOR datas/sharp/secrets.env        # 填 SHARP_ANTHROPIC_AUTH_TOKEN 等
 
-# 2) 构建 worker 镜像（一次，几分钟；需网络）
+# 2) 构建 worker 镜像（可跳过——首次 ./run.sh 会自动完成：检测架构 → 拉 vendor → 构建）
 cd container && ./fetch_vendor.sh && docker build -t sharp-worker:latest . && cd ..
-# Apple Silicon 建议构建原生 arm64（省掉 qemu 模拟，容器内跑扫描器快数倍）：
-#   cd container && ARCH=arm64 ./fetch_vendor.sh && docker build --platform linux/arm64 -t sharp-worker:latest . && cd ..
-# 注：naabu 上游未提供 linux/arm64 构建，arm64 镜像中不含它（Dockerfile 会自动跳过）；ripgrep 走 apt 安装
+# 架构自动感知：vendor 优先按其 .arch 标记，否则按 Docker daemon 架构（Apple Silicon
+# 自动构建 arm64 原生镜像，省掉 qemu 模拟）；已有镜像架构不匹配时启动器自动重建。
+# 预拉代理均可透传：GH=https://ghfast.top/ ./fetch_vendor.sh 或 https_proxy=http://127.0.0.1:7890
+# 注：naabu 上游未提供 linux/arm64 构建，arm64 镜像中不含它（端口扫描走 nmap 等价替代）
 
 # 3) 启动（首次会初始化管理员密码）
 ./run.sh
@@ -265,5 +266,3 @@ python3 ../scripts/check_methods.py              # 前端 Alpine 方法完整性
 - 本开源包按 **AGPL-3.0** 发布，详见 `LICENSE`。
 - 另有**商业授权**（Ed25519 离线授权）用于桌面发行版，见 `docs/OPENSOURCE_RELEASE.md`。
 - 第三方组件许可见 `THIRD_PARTY_NOTICES.md`。
-
-> AI生成
