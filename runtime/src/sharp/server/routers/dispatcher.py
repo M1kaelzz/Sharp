@@ -260,3 +260,66 @@ def worker_output(body: WorkerOutputRequest):
         "text": body.text[-4096:],  # cap at 4KB per event
     })
     return None
+
+
+# ── P2 HA active-lease (batch 12) ─────────────────────────────────────────────
+# Server is the sole arbiter of which dispatcher instance may dispatch. The
+# single dispatcher_lease row is CAS'd: an empty/expired lease or the current
+# holder (renewal) acquires; anyone else is told who holds it. When the active
+# instance dies its lease expires (ha_takeover_after on the dispatcher side,
+# passed as ttl_seconds) and a standby takes over automatically.
+
+class DispatcherLeaseRequest(_BaseModel):
+    dispatcher_id: str
+    ttl_seconds: int = 15
+
+
+def _lease_expired(row, now: str) -> bool:
+    # ISO Z timestamps share one format, so lexicographic compare == time.
+    return not row["holder"] or row["expires_at"] <= now
+
+
+@router.post("/dispatcher/lease", include_in_schema=False)
+def acquire_dispatcher_lease(body: DispatcherLeaseRequest):
+    from datetime import datetime, timedelta, timezone
+
+    if not body.dispatcher_id:
+        return {"acquired": False, "holder": "", "expires_at": ""}
+
+    now_dt = datetime.now(timezone.utc)
+    now = now_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    expires_at = (now_dt + timedelta(seconds=max(1, body.ttl_seconds))).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT holder, expires_at FROM dispatcher_lease WHERE id = 1"
+        ).fetchone()
+        if row is None:  # never expected (configure seeds it), self-heal anyway
+            conn.execute(
+                "INSERT OR IGNORE INTO dispatcher_lease (id, holder, expires_at) VALUES (1, '', '')"
+            )
+            row = {"holder": "", "expires_at": ""}
+        if _lease_expired(row, now) or row["holder"] == body.dispatcher_id:
+            conn.execute(
+                "UPDATE dispatcher_lease SET holder = ?, expires_at = ? WHERE id = 1",
+                (body.dispatcher_id, expires_at),
+            )
+            return {"acquired": True, "holder": body.dispatcher_id, "expires_at": expires_at}
+        return {
+            "acquired": False,
+            "holder": row["holder"],
+            "expires_at": row["expires_at"],
+        }
+
+
+@router.post("/dispatcher/lease/release", include_in_schema=False)
+def release_dispatcher_lease(body: DispatcherLeaseRequest):
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE dispatcher_lease SET holder = '', expires_at = '' "
+            "WHERE id = 1 AND holder = ?",
+            (body.dispatcher_id,),
+        )
+        released = cur.rowcount == 1
+    return {"released": released}

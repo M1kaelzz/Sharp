@@ -104,10 +104,28 @@ def dispatch(config_path: Path, once: bool, startup_healthcheck_only: bool, log_
     """Run the Sharp dispatcher."""
     configure_logging(log_level, bare=startup_healthcheck_only)
     if not once and not startup_healthcheck_only:
+        # P2 HA standby (batch 12): when runtime.ha_standby is enabled the
+        # machine-level dispatch lock is bypassed (multiple dispatcher
+        # instances are expected; the SERVER-side active lease decides who
+        # dispatches). Legacy default (ha_standby=false) keeps the strict
+        # single-instance lock bit-for-bit.
+        ha_standby = False
         try:
-            _LOCK_HANDLES.append(acquire_single_instance_lock("dispatch", detail=str(config_path)))
-        except SingleInstanceError as exc:
-            raise click.ClickException(str(exc)) from exc
+            from sharp.dispatcher.config import DispatchConfig
+
+            ha_standby = bool(DispatchConfig.load(config_path).runtime.ha_standby)
+        except Exception:
+            ha_standby = False  # unreadable config: keep the strict lock
+        if ha_standby:
+            click.echo(
+                "HA standby 模式：跳过本机单实例锁，由服务端活跃租约裁决派发归属",
+                err=True,
+            )
+        else:
+            try:
+                _LOCK_HANDLES.append(acquire_single_instance_lock("dispatch", detail=str(config_path)))
+            except SingleInstanceError as exc:
+                raise click.ClickException(str(exc)) from exc
     loop = DispatcherLoop(config_path, server_override=server)
     try:
         if startup_healthcheck_only:

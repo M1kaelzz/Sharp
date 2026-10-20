@@ -167,6 +167,49 @@ check_docs 通过。
 
 ---
 
+### P2｜多实例 HA（Active-Standby 热备，默认关闭）
+
+**类别**：进程级高可用（dispatcher 崩溃/OOM/误杀的恢复时间从"人工发现+重启"降到秒级自动接管）
+
+**背景**：单点分析发现——任务认领已是**服务端原子 CAS**（`intents_repo.claim`
+行数判定，两实例抢同一 intent 只有一个赢）、租约已是 **server 权威**
+（`expire_workers` 心跳超时自动释放→实例死后任务自动回可认领池）、SQLite 已
+WAL——**failover 地基层天然存在**。真正的缺口：① fcntl 机器锁禁止第二实例；
+② 活跃性判定在"进程视角"（一把锁）而非"server 视角"（共享真相）。跨机
+Active-Active 需容器编排层重写（每项目容器落本机 docker），非本批量级；ARTEX
+的多实例是 PostgreSQL 重架构换来的。本批做**同机进程级热备**。
+
+**机制**：`runtime.ha_standby`（默认 `false`=旧行为，fcntl 锁不变）+ 
+`ha_takeover_after`（默认 15s，≥3s）：
+
+- **服务端活跃租约**：新表 `dispatcher_lease`（单行，configure 幂等 seed）+
+  `POST /dispatcher/lease`（acquire/renew，server CAS：空/过期/本人=赢，他人=
+  拒绝并告知 holder）+ `/release`（仅 holder 可释放）；
+- **dispatcher 侧**：每 tick `_ha_tick()` 续租——赢家派发（`_dispatch_available`
+  与容器清理 gate 在租约后），输家**standby 待命**（reap/项目刷新保持状态温热，
+  但零派发零容器操作）；active 死亡 → 租约 15s 过期 → standby 自动 promote；
+- **fail-open 语义**：续租**网络错误保持原模式**（server 不可达时谁都抢不走
+  租约，in-flight 不受网络抖动影响）；只有 server 明确"他人持有"才降级——
+  server 是唯一裁决者，无脑裂；
+- **软状态零共享**：止损计数/worker 冷却仍是进程内——同一时刻只有一个实例
+  派发，语义与单实例完全一致，调度器核心零改动；
+- **锁旁路**：cli 在 `ha_standby=true` 时跳过 dispatch 机器锁（stderr 提示），
+  server 锁保持单实例；failover 时 in-flight 任务走既有 `expire_workers` 心跳
+  超时释放（与 crash 恢复同语义）；优雅退出 best-effort 立即释放租约。
+
+**改前行为**：一台机器一个 dispatcher（fcntl 强制），挂了需人工重启。
+**改后行为（启用时）**：可跑第二个 dispatcher 进程，active 挂后 ≤15s 自动接管。
+**（默认关闭时）**与基线完全一致（锁照旧、`_ha_enabled=False` 短路返回 True）。
+**验证**：新增 `tests/test_ha_standby.py`（16 用例：_acquire 后他人被拒、holder
+续租、过期可接管、release 即接管/非 holder 无操作、lease 行 seed、HA 关恒 True、
+standby promote、active 明确被抢降级、standby 保持、**传输错误保持原模式**双
+向、TTL 透传、run gate/close release/cli 锁旁路接线守护、config 默认值）+
+突变验证（摘除 run gate → 守护用例失败）+ 全量 858 用例全绿（842+16）+
+check_methods/check_docs 通过。
+**回滚**：`ha_standby` 设 `false`（或 `git revert` 对应提交）。
+
+---
+
 ### P1-1｜证据自动绑定通道（默认关闭）
 
 **类别**：证据客观化（让漏洞证据从"模型自述"转向"观察事实"，P1-1 首版）

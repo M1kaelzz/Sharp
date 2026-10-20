@@ -178,6 +178,31 @@ class SharpClient:
         except Exception:
             return None
 
+    def acquire_dispatcher_lease(
+        self, dispatcher_id: str, ttl_seconds: int
+    ) -> dict[str, Any]:
+        """P2 HA active-lease (batch 12). Acquire/renew the single dispatch
+        lease; returns {"acquired": bool, "holder": ..., "expires_at": ...}.
+        Raises requests exceptions on transport errors (caller decides)."""
+        response = self._session().post(
+            self._url("/dispatcher/lease"),
+            json={"dispatcher_id": dispatcher_id, "ttl_seconds": ttl_seconds},
+            timeout=5,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def release_dispatcher_lease(self, dispatcher_id: str) -> None:
+        """Release the HA lease on graceful shutdown. Best-effort."""
+        try:
+            self._session().post(
+                self._url("/dispatcher/lease/release"),
+                json={"dispatcher_id": dispatcher_id},
+                timeout=5,
+            )
+        except Exception:
+            pass
+
     def delete_self_status(self, dispatcher_id: str) -> None:
         """Remove this dispatcher's own status row on graceful shutdown, so the
         status page does not accumulate stale rows across restarts. Best-effort."""

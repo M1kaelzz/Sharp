@@ -93,6 +93,20 @@ runtime:
   #     ANTHROPIC_MODEL: "opus"
   #   explore:
   #     ANTHROPIC_MODEL: "haiku"
+  # P2 HA standby (active-standby hot spare). false = disabled (legacy: the
+  # machine-level fcntl lock permits exactly one dispatcher process). When
+  # true you may start a SECOND dispatcher process against the same server:
+  # a server-side active lease (dispatcher_lease row) decides which instance
+  # dispatches; the other waits as standby. If the active process dies its
+  # lease expires after ha_takeover_after seconds and the standby is promoted
+  # automatically — process-level HA without a scheduler rewrite. NOTE: the
+  # lock bypass only lifts for the dispatcher; the server stays single
+  # instance. Restart to change.
+  # ha_standby: false
+  # Lease TTL: how long after the active dispatcher's last heartbeat a standby
+  # may take over. 15s ≈ 5 ticks at interval=3s (network blips don't trigger a
+  # false takeover).
+  # ha_takeover_after: 15
 
 tasks:
   bootstrap:

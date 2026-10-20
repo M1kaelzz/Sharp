@@ -509,6 +509,20 @@ facts 表加第一手 `created_at TEXT NOT NULL DEFAULT ''`（老库 `_migrate` 
 （healthcheck/execute/conclude）用覆盖后 env，配错模型在 healthcheck 即暴露。
 不拆 conclude（跨模型续会话语义未验证，留后续）。
 
+##### 多实例 HA：Active-Standby 热备（P2，`runtime.ha_standby` 默认关）
+
+活跃性裁决从"进程视角"（fcntl 机器锁）搬到"server 视角"：新表 `dispatcher_lease`
+（单行）+ `POST /dispatcher/lease[\/release]`——server CAS（空/过期/本人=赢，他人
+拒绝并告知 holder）。dispatcher 每 tick `_ha_tick()` 续租：赢家派发（`_dispatch_
+available` 与容器清理 gate 在租约后），输家 standby（reap/项目刷新保持温热，
+零派发零容器操作）；active 死亡 → 租约 `ha_takeover_after`（默认 15s）过期 →
+standby 自动 promote。传输错误保持原模式（fail-open，server 不可达时谁都
+抢不走租约，无脑裂）；只有 server 明确"他人持有"才降级。软状态（止损计数/
+worker 冷却）零共享——同一时刻只有一个实例派发。cli 在 ha_standby=true 时跳过
+dispatch 机器锁（server 锁保持）；failover 时 in-flight 任务走既有
+`expire_workers` 心跳释放（与 crash 恢复同语义）。跨机 Active-Active 需容器编
+排层重写，非本批（ARTEX 用 PostgreSQL 重架构换）。
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线

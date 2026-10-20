@@ -130,6 +130,11 @@ class DispatcherLoop:
         # P2-3: tracks which projects have already received a budget-exhausted hint.
         self._budget_hint_written: set[str] = set()
         self._deadline_hint_written: set[str] = set()
+        # P2 HA standby (batch 12): server-side active-lease arbitration. When
+        # ha_standby is on, _ha_active reflects lease ownership and gates every
+        # dispatch decision; off -> permanently True (legacy bit-for-bit).
+        self._ha_enabled = bool(config.runtime.ha_standby)
+        self._ha_active = not self._ha_enabled
 
     def close(self) -> None:
         if self.futures:
@@ -166,6 +171,14 @@ class DispatcherLoop:
         self.executor.shutdown(wait=False)
         self.cleanup_executor.shutdown(wait=False)
         self.container_manager.close()
+        # P2 HA: release the active lease so a standby takes over immediately
+        # instead of waiting out ha_takeover_after (best-effort, same style as
+        # delete_self_status).
+        if self._ha_enabled and self._ha_active:
+            try:
+                self.client.release_dispatcher_lease(self.dispatcher_id)
+            except Exception:
+                pass
         # Graceful shutdown: drop our own status row so restarts do not leave
         # stale dispatcher entries behind (each restart uses a fresh id).
         try:
@@ -190,8 +203,12 @@ class DispatcherLoop:
                     self._initialize_reason_checkpoints(summaries)
                     self._refresh_runtime_projects(summaries)
                     self._cancel_inactive_tasks(summaries)
-                    self._queue_container_cleanups(summaries)
-                    self._dispatch_available(summaries)
+                    if self._ha_tick():
+                        # P2 HA: only the lease holder dispatches; a standby
+                        # keeps its state warm (reaps, project refresh) but
+                        # never starts tasks or container churn.
+                        self._queue_container_cleanups(summaries)
+                        self._dispatch_available(summaries)
                     self._publish_status(summaries)
                 except requests.RequestException as exc:
                     if once:
@@ -1578,6 +1595,37 @@ class DispatcherLoop:
         if any(result.ok for result in results):
             return
         raise RuntimeError(format_failure_summary(results))
+
+    def _ha_tick(self) -> bool:
+        """P2 HA active-lease (batch 12): acquire/renew before dispatching.
+
+        Disabled -> always True (legacy bit-for-bit). Enabled -> the winner of
+        the server-side lease dispatches this tick; everyone else returns
+        False and stays standby. Transport errors keep the PREVIOUS mode this
+        tick (fail-open): if the server is unreachable nobody can steal the
+        lease either, so in-flight work keeps running instead of flapping the
+        dispatcher on network blips. An explicit "held by another" answer is
+        the only thing that demotes an active instance.
+        """
+        if not self._ha_enabled:
+            return True
+        try:
+            result = self.client.acquire_dispatcher_lease(
+                self.dispatcher_id,
+                self.config.runtime.ha_takeover_after,
+            )
+        except Exception:
+            return self._ha_active
+        acquired = bool(result.get("acquired"))
+        if acquired and not self._ha_active:
+            LOG.info("HA standby promoted to active dispatcher_id=%s", self.dispatcher_id)
+        elif not acquired and self._ha_active:
+            LOG.warning(
+                "HA active lease held by another dispatcher holder=%s demoting to standby",
+                result.get("holder"),
+            )
+        self._ha_active = acquired
+        return acquired
 
     def _publish_status(self, summaries: list[ProjectSummary]) -> None:
         response = self.client.update_dispatcher_status(self.dispatcher_id, self._status_snapshot(summaries))

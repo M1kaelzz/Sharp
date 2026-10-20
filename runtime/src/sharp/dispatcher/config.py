@@ -257,6 +257,20 @@ class RuntimeConfig(BaseModel):
     # type (healthcheck / execute / conclude / metering), so a misconfigured
     # override model fails at healthcheck, not mid-round.
     task_env_overrides: dict[str, dict[str, str]] = {}
+    # P2 HA standby (default False = disabled, legacy behavior: fcntl
+    # machine lock permits exactly one dispatcher). When True, HA moves from
+    # "process view" to "server view": every tick the dispatcher acquires/renews
+    # the server-side active lease (single dispatcher_lease row, server CAS);
+    # the winner dispatches, everyone else waits as standby. If the active
+    # instance dies its lease expires after ha_takeover_after seconds and a
+    # standby is promoted automatically — process-level HA without rewriting
+    # the scheduler (in-memory soft state — stall counters, worker cooldowns —
+    # needs no sharing: only one instance dispatches at a time).
+    ha_standby: bool = False
+    # P2 HA lease TTL: how long after the active dispatcher's last heartbeat a
+    # standby may take over. >= 3s; default 15s (~5 ticks at interval=3s, so a
+    # transient network blip does not trigger a false takeover).
+    ha_takeover_after: int = Field(default=15, ge=3)
 
     @field_validator("task_env_overrides")
     @classmethod

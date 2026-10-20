@@ -153,6 +153,15 @@ CREATE TABLE IF NOT EXISTS dispatcher_status (
     data TEXT NOT NULL
 );
 
+-- P2 HA active-lease (batch 12): single-row lease deciding which dispatcher
+-- instance may dispatch. Server is the sole arbiter of liveness; the lease
+-- row is seeded by configure() so a legacy DB also gets it.
+CREATE TABLE IF NOT EXISTS dispatcher_lease (
+    id INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    holder TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS auth (
     id INTEGER PRIMARY KEY DEFAULT 1,
     password_hash TEXT NOT NULL,
@@ -410,6 +419,11 @@ def configure(path: Path) -> None:
     with get_conn() as conn:
         _migrate(conn)
         conn.executescript(SCHEMA)
+        # P2 HA lease (batch 12): seed the single lease row idempotently so the
+        # acquire endpoint always has a row to CAS against (old + new DBs).
+        conn.execute(
+            "INSERT OR IGNORE INTO dispatcher_lease (id, holder, expires_at) VALUES (1, '', '')"
+        )
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
