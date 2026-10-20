@@ -15,6 +15,7 @@ from sharp.dispatcher.tasks.common import (
     ApkInjectionError,
     ConcludeWriteResult,
     EvidenceBuffer,
+    apply_task_env_overrides,
     best_effort_release,
     cancel_reason,
     cleanup_graph_snapshots,
@@ -50,6 +51,9 @@ def run_explore_task(
     worker: WorkerConfig,
     cancellation: TaskCancellation,
 ) -> str:
+    # P2 task-type env overrides (model split): merge before any driver/env use
+    # so healthcheck/execute/conclude/metering all see the overridden env.
+    worker = apply_task_env_overrides(config, "explore", worker)
     driver = get_driver(worker.type)
     task_started = time.perf_counter()
     healthcheck_timeout = config.runtime.healthcheck_timeout

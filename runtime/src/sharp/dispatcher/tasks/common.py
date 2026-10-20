@@ -215,6 +215,30 @@ def summarize_graph_yaml_by_distance(
     return yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
+def apply_task_env_overrides(
+    config: DispatchConfig,
+    task_type: str,
+    worker: WorkerConfig,
+) -> WorkerConfig:
+    """Merge task-type env overrides over the selected worker (P2 model split).
+
+    ``runtime.task_env_overrides`` maps task_type -> env vars. When the task
+    type has overrides, returns a shallow worker copy whose env is
+    ``{**worker.env, **overrides}``; otherwise returns ``worker`` unchanged.
+    The copy keeps the same ``name`` (and every other field), so scheduling
+    (max_running counts, health cooldown, rejection backoff) and token-metering
+    bookkeeping all keep operating on the same worker identity — only the env
+    handed to the container exec changes.
+
+    Empty/missing overrides = the untouched worker object (legacy behavior,
+    bit-for-bit).
+    """
+    overrides = config.runtime.task_env_overrides.get(task_type)
+    if not overrides:
+        return worker
+    return worker.model_copy(update={"env": {**worker.env, **overrides}})
+
+
 class ApkInjectionError(RuntimeError):
     """Raised when a project's APK target cannot be placed into the container.
     The task layer turns this into a task failure with a written reason, so the

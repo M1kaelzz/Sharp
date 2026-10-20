@@ -499,6 +499,16 @@ facts 表加第一手 `created_at TEXT NOT NULL DEFAULT ''`（老库 `_migrate` 
 排序（无时间戳视为最旧、列表位置 tie-break，全老库退化=旧行为）；输出保持原始
 顺序，仅截断对象变化。`graph_distance_context` 开启时距离模式优先（批8 覆盖批10）。
 
+##### 任务类型级模型分工（P2，`runtime.task_env_overrides`，默认空=关）
+
+模型选型粒度从 worker 下放到 task_type：`task_env_overrides` 映射 task_type → env
+变量，任务入口（reason/bootstrap/explore，`get_driver` 前）经
+`apply_task_env_overrides` 合并进所选 worker——无覆盖返回原对象（legacy），有覆盖
+`model_copy` 换 env 但 name 不变。worker 仍是调度单元（max_running/健康冷却/拒绝
+退避/token 计量均按原 name 记账，计量自动记录实际模型）；该任务类型全部阶段
+（healthcheck/execute/conclude）用覆盖后 env，配错模型在 healthcheck 即暴露。
+不拆 conclude（跨模型续会话语义未验证，留后续）。
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线

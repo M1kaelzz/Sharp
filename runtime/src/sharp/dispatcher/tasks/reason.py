@@ -19,6 +19,7 @@ from sharp.dispatcher.runtime.containers import ContainerManager
 from sharp.dispatcher.runtime.heartbeat import HeartbeatLease
 from sharp.dispatcher.tasks.explore import _asset_ledger_block
 from sharp.dispatcher.tasks.common import (
+    apply_task_env_overrides,
     best_effort_release_reason,
     cancel_reason,
     cleanup_graph_snapshots,
@@ -401,6 +402,9 @@ def run_reason_task(
     worker: WorkerConfig,
     cancellation: TaskCancellation,
 ) -> str:
+    # P2 task-type env overrides (model split): merge before any driver/env use
+    # so healthcheck/execute/metering all see the overridden env.
+    worker = apply_task_env_overrides(config, "reason", worker)
     driver = get_driver(worker.type)
     task_started = time.perf_counter()
     healthcheck_timeout = config.runtime.healthcheck_timeout

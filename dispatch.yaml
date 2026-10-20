@@ -72,6 +72,27 @@ runtime:
   # from the observed output for that URL. Task-local only — no proxy, no
   # TLS/JA3 impact. NOTE: read once at dispatcher start; restart to change.
   evidence_auto_bind: false
+  # P2 context graph-distance compression. false = disabled (legacy time-based
+  # truncation). When true, the graph YAML handed to reason/explore compresses
+  # facts by structural distance from the focus node (reason: goal; explore:
+  # the intent's from facts) instead of recency. NOTE: restart to change.
+  graph_distance_context: false
+  # P2 fact time ordering. false = disabled (legacy: the time-based summarizer
+  # picks "most recent" by list order). When true it ranks by the facts'
+  # first-hand created_at timestamps. NOTE: restart to change.
+  fact_time_ordering: false
+  # P2 task-type env overrides (model split). Empty = disabled (legacy: every
+  # task type runs the worker's model). Maps task type -> env vars merged over
+  # the selected worker's env for that task type only — reason (low-frequency
+  # planning) can run a strong model while explore (high-frequency execution)
+  # runs a cheap one, without duplicating worker entries. The worker stays the
+  # scheduling unit; every phase (healthcheck/execute/conclude/metering) of
+  # the task type sees the overridden env. NOTE: restart to change.
+  # task_env_overrides:
+  #   reason:
+  #     ANTHROPIC_MODEL: "opus"
+  #   explore:
+  #     ANTHROPIC_MODEL: "haiku"
 
 tasks:
   bootstrap:

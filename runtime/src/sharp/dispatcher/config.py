@@ -247,6 +247,28 @@ class RuntimeConfig(BaseModel):
     # actually newest. Only affects the legacy summarizer; when
     # graph_distance_context is enabled the distance-based summarizer wins.
     fact_time_ordering: bool = False
+    # P2 task-type env overrides (default empty = disabled, legacy behavior):
+    # maps task_type -> env vars merged over the selected worker's env for that
+    # task type only. Lets reason (low-frequency planning, strong reasoning)
+    # and explore (high-frequency execution, token-heavy) run different models
+    # without duplicating worker entries: the worker stays the scheduling unit
+    # (max_running / health cooldown / rejection backoff / token metering all
+    # keep working on the same worker name). Applies to ALL phases of the task
+    # type (healthcheck / execute / conclude / metering), so a misconfigured
+    # override model fails at healthcheck, not mid-round.
+    task_env_overrides: dict[str, dict[str, str]] = {}
+
+    @field_validator("task_env_overrides")
+    @classmethod
+    def validate_task_env_overrides(cls, value: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+        allowed = {"reason", "explore", "bootstrap"}
+        bad = sorted(set(value) - allowed)
+        if bad:
+            raise ValueError(f"task_env_overrides keys must be one of {sorted(allowed)}, got {bad}")
+        for task_type, env in value.items():
+            if not isinstance(env, dict):
+                raise ValueError(f"task_env_overrides.{task_type} must be a mapping of env var -> value")
+        return value
 
 
 class WorkerConfig(BaseModel):

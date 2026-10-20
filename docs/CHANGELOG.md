@@ -126,6 +126,47 @@ config 默认关、调用点接线守护）+ 突变验证（摘除 time_ordering
 
 ---
 
+### P2｜Reason/Explore 模型分工（任务类型级 env 覆盖，默认关闭）
+
+**类别**：成本结构分层（规划用强模型、执行用便宜模型，配合批4 token 计量验证省钱效果）
+
+**背景**：模型选择粒度 = worker 配置单元——但出厂配置一个 worker 通吃三种任务
+（`task_types: [bootstrap, reason, explore]` + 单一 `ANTHROPIC_MODEL`），reason
+（图级规划：低频、需强推理）与 explore（单意图执行：高频、token 大头）跑同一款
+模型。要分工就得复制 worker 条目：凭证重复两份、`max_running` 并发名额被拆散、
+健康冷却/拒绝退避各算一份。**模型选型的配置粒度（worker）≠ 任务的认知负载粒度
+（task_type）**。
+
+**机制**：`runtime.task_env_overrides`（默认 `{}`=旧行为）：task_type → env 变量
+映射，在任务入口合并进所选 worker：
+
+- `common.py::apply_task_env_overrides`：无覆盖返回**同一个 worker 对象**（逐字节
+  legacy）；有覆盖 `worker.model_copy(update={"env": {**worker.env, **overrides}})`；
+- 三入口（reason/bootstrap/explore）在 `get_driver` 前接线——该任务类型的**全部
+  阶段**（healthcheck/execute/conclude/token 计量）自动用覆盖后 env：healthcheck
+  直接 ping 分工模型，配错模型名在安检就暴露，不烧整轮；
+- worker 仍是调度单元：`name` 不变 → max_running 计数、健康冷却、拒绝退避、
+  token 计量兜底（`worker.env.get("ANTHROPIC_MODEL")`，批4）全部照旧且自动记录
+  实际模型；
+- 配置级校验：key 必须 ∈ {reason, explore, bootstrap}，value 必须是 mapping；
+- dispatch.yaml 附注释示例（默认注释掉）。
+
+**范围决策**：本批不拆 conclude 阶段（`claude -r` 续会话跨模型语义未验证；一次
+只改一个关注点）——ARTEX "digest 换便宜模型"的完整对应留后续批次验证后做。
+
+**改前行为**：三种任务同款模型（worker 级配置）。
+**改后行为（启用时）**：按任务类型覆盖 env，如 reason=opus / explore=haiku。
+**（默认关闭时）**与基线完全一致（空 dict 短路返回原对象）。
+**验证**：新增 `tests/test_task_env_overrides.py`（11 用例：默认空 dict、合法/
+非法 key 校验、无覆盖返回同对象、其他任务类型不受影响、合并保 name 与其余
+字段/覆盖赢/原对象不被改、空 mapping=legacy、多变量合并、三入口接线源码守护
+（必须在 get_driver 前）、dispatch.yaml 注释示例与解析为空）+ 突变验证（摘除
+explore 接线 → 守护用例失败）+ 全量 842 用例全绿（831+11）+ check_methods/
+check_docs 通过。
+**回滚**：`task_env_overrides` 删除或置空（或 `git revert` 对应提交）。
+
+---
+
 ### P1-1｜证据自动绑定通道（默认关闭）
 
 **类别**：证据客观化（让漏洞证据从"模型自述"转向"观察事实"，P1-1 首版）
