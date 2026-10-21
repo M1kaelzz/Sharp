@@ -147,7 +147,10 @@ class DispatcherLoop:
         # P2 HA standby (batch 12): server-side active-lease arbitration. When
         # ha_standby is on, _ha_active reflects lease ownership and gates every
         # dispatch decision; off -> permanently True (legacy bit-for-bit).
-        self._ha_enabled = bool(config.runtime.ha_standby)
+        # NOTE: use `self.config` (loaded ~47 lines above). A bare `config`
+        # here NameError'd on the FIRST real dispatcher start (2026-10-21)
+        # because every test bypassed __init__ via DispatcherLoop.__new__.
+        self._ha_enabled = bool(self.config.runtime.ha_standby)
         self._ha_active = not self._ha_enabled
 
     def close(self) -> None:

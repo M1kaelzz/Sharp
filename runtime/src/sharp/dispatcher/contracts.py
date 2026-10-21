@@ -246,7 +246,6 @@ def validate_explore_payload(
     findings_raw = data.get("findings")
     if findings_raw is not None:
         return "fact", description.strip(), normalize_findings(findings_raw)
-        return "fact", description.strip(), findings or None
     return "fact", description.strip(), None
 
 

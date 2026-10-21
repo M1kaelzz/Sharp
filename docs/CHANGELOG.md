@@ -19,6 +19,36 @@ AIGC:
 
 ## 2026-10-21
 
+### 修复：dispatcher 首次真实启动 NameError（HA 批笔误）——测试盲区补真实 __init__ 路径（952 全绿）
+
+**来源**：`./run.sh` 镜像修复（2e41b4c）后用户重跑，sync/桌面/等待 API 全部通过，
+dispatcher 启动即崩：`loop.py:150 NameError: name 'config' is not defined`。
+
+**根因**：批12（HA 热备）在 `DispatcherLoop.__init__` 尾部写了裸名
+`config.runtime.ha_standby`（应为 `self.config.`）；而全部 HA 状态机测试用
+`DispatcherLoop.__new__` 构造（合理——真实构造依赖 docker/线程池），
+`__init__` 从未在 946 个测试里执行过 → 笔误存活到第一次真实启动。
+
+**修复**：
+- `loop.py:150`：`config.runtime.ha_standby` → `self.config.runtime.ha_standby`
+  （字段在 `RuntimeConfig:269` 确认存在）；
+- **测试盲区收口**：`test_ha_standby.py` 新增 2 用例（21 项全绿）——monkeypatch
+  `DispatchConfig.load`/`SharpClient`/`ContainerManager`/`ThreadPoolExecutor` 后
+  **真实执行 `__init__` 全程**，断言 HA off/on 两分支语义
+  （off→`(False, True)` 永久活跃；on→`(True, False)` 待首租约）——突变自检：
+  改回裸名 `config` 立即 NameError 失败；
+- **同类隐患全灭**（pyflakes 静态扫描 runtime/src）：`contracts.py:249` 死代码
+  （unreachable return 引用未定义 `findings`，编辑残留）删除；
+  `services.py:209` 字符串注解 `"Vulnerability"` 为误报（延迟导入，永不求值），
+  保持原样。
+
+**验证**：`./sharp dispatch --startup-healthcheck-only`（真实 CLI → 真实
+`DispatchConfig` → 真实 `DispatcherLoop.__init__`）完整通过 NameError 点并跑完
+健康检查（连 server 8000、起容器探测 worker 正常；暴露的环境性 401 属用户
+secrets.env 凭据问题，非代码缺陷）；全量 **952 全绿**（950+2）。
+
+---
+
 ### 修复：run.sh 镜像 × uv --locked 冲突（首次真实启动即炸）——启动器全程 --frozen
 
 **来源**：用户首次真实执行 `./run.sh`（desktop 桌面模式），环境预检全绿后在

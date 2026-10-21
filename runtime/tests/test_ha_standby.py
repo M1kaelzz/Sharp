@@ -346,3 +346,64 @@ def test_restart_legacy_mode_keeps_pgrep_behavior(client, monkeypatch):
     r = _post_restart(client)
     assert r.status_code == 200, r.text
     assert r.json().get("action") == "relaunch_launcher"
+
+
+# ── 5. real-__init__ smoke (2026-10-21) ────────────────────────────────────
+# Every state-machine test above builds the loop via DispatcherLoop.__new__
+# (legitimately: __init__ pulls docker-backed collaborators). That style had a
+# blind spot: a bare `config` name in __init__ (the HA line, batch 12) survived
+# 946 green tests and only exploded on the FIRST real dispatcher start:
+#     NameError: name 'config' is not defined
+# This test EXECUTES __init__ end to end with the collaborators faked, so any
+# typo in the constructor fails in CI instead of in the user's terminal.
+
+class _FakeConfig(types.SimpleNamespace):
+    @classmethod
+    def load(cls, path):
+        cfg = cls.__new__(cls)
+        cfg.server = "http://testserver"
+        cfg.container = object()
+        cfg.runtime = types.SimpleNamespace(
+            ha_standby=False,
+            # Batch-12 semantics under test, both branches:
+            ha_takeover_after=15,
+            max_workers=2,
+        )
+        return cfg
+
+
+def _init_loop(monkeypatch, *, ha_standby: bool, tmp_path):
+    import sharp.dispatcher.scheduler.loop as loop_mod
+
+    class _Cfg(_FakeConfig):
+        pass
+
+    _Cfg.load = classmethod(lambda cls, path: types.SimpleNamespace(
+        server="http://testserver",
+        container=object(),
+        runtime=types.SimpleNamespace(
+            ha_standby=ha_standby, ha_takeover_after=15, max_workers=2
+        ),
+    ))
+    monkeypatch.setattr(loop_mod, "DispatchConfig", _Cfg)
+    monkeypatch.setattr(loop_mod, "SharpClient", lambda server: object())
+    monkeypatch.setattr(loop_mod, "ContainerManager", lambda container: object())
+    monkeypatch.setattr(
+        loop_mod, "ThreadPoolExecutor", lambda max_workers: object()
+    )
+    return DispatcherLoop(tmp_path / "dispatch.yaml")
+
+
+def test_init_executes_end_to_end_ha_off(monkeypatch, tmp_path):
+    """__init__ must run to completion (regression: bare `config` NameError)."""
+    loop = _init_loop(monkeypatch, ha_standby=False, tmp_path=tmp_path)
+    # Legacy semantics: ha off -> permanently active, gates nothing.
+    assert loop._ha_enabled is False
+    assert loop._ha_active is True
+
+
+def test_init_executes_end_to_end_ha_on(monkeypatch, tmp_path):
+    """ha_standby on: starts as standby until the first lease tick."""
+    loop = _init_loop(monkeypatch, ha_standby=True, tmp_path=tmp_path)
+    assert loop._ha_enabled is True
+    assert loop._ha_active is False
