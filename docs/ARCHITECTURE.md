@@ -1085,7 +1085,7 @@ static/
 │                           #   reports / approvals / app-analysis / chat / newproject /
 │                           #   settings / dispatcher —— 由服务端 include 拼回，拼接结果与
 │                           #   拆分前逐字节一致（tests/test_index_rendering.py）
-├── app.js                  # 组装入口：状态字段声明 + 11 个模块函数调用 + return（189 行）
+├── app.js                  # 组装入口：状态字段声明（完整嵌套形状）+ 11 个模块函数调用 + return（262 行）
 ├── app.core.js             # 核心：init/api/认证/主题/Toast/格式化/factAutoTags/心跳/Dashboard/导航/成本带（115 方法）
 ├── app.projects.js         # 项目：列表/筛选/星标/标签/资产中心/资产类型/导出/AI报告/删除/重命名/模板（63 方法）
 ├── app.graph.js            # 证据—行动图：Cytoscape/样式/布局/选区/血缘/面板resize + 证据纠错（75 方法）
@@ -1138,9 +1138,9 @@ function applyXxxModule(obj) {
 **设计原则**：
 - 状态集中声明在 `app.js`，模块只挂载方法
 - `index.html` 按依赖顺序加载 12 个 JS 文件（模块在前，`app.js` 最后）
-- 版本号统一管理（当前 `v=73`），修改任何 JS 后递增版本号以刷新浏览器缓存
+- 版本号统一管理（当前 `v=74`），修改任何 JS 后递增版本号以刷新浏览器缓存
 - 共 **445 个方法**，跨模块零重复（`scripts/check_methods.py` 校验，HTML 调用 248 处）
-- **状态声明完整性守护（2026-10-20）**：`tests/test_frontend_state_guard.py` 交叉校验模板引用的根标识符 vs `app.js`/模块挂载声明——漏声明时 `x-text` 求值失败、按钮/文本渲染为**空白**（设置页按钮空白 bug 的根因；历史上已踩三次：`pwLoading/pwError/mcpSaving`、`usageSummary`、`graphActionMenu`）。已知边界：只校验根标识符（`a.b.c` 仅校验 `a`）且不含 `index.html` 内联模板
+- **状态声明完整性守护（2026-10-20，v2）**：`tests/test_frontend_state_guard.py` 交叉校验模板表达式 vs 声明——两种失败模式：①**根未声明** `x-text` 渲染空白（设置页按钮空白根因，历史三例：`pwLoading/pwError/mcpSaving`、`usageSummary`、`graphActionMenu`）；②**嵌套键缺失** 每次加载刷 TypeError 且 JS 侧 `.trim()` 类直接抛（`secretsForm` 保存静默失败）。v2 覆盖：`views/*.html` + `index.html` 内联模板、链式第二/三段（对象字面量根逐段校验）；解析器对字符串/注释/正则/嵌套模板字面量感知
 - 资产中心（批次 11.4）：`app.projects.js` 的 `toggleAssetsPanel/loadAssets/assetKindBadge` + `assets/assetsLoaded/assetsLoading/assetsPanelOpen/projectAssetFilter` 状态；`filteredProjects()` 支持按 `asset_ref` 精确过滤 + haystack 含资产键/类型
 - **目标空间详情（P2-A，2026-09-09）**：`GET /asset-spaces/{asset_ref}` —— 回答"**这个资产整体**打到哪了"。
   三个视角各司其职，不重复：

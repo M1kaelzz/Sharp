@@ -35,11 +35,30 @@ function sharpApp() {
     disclaimerOpen: !sessionStorage.getItem('sharp.disclaimer_agreed'),
 
     // ── 项目列表 / 资产中心 ─────────────────────────────────────────────
-    project: {},            // 当前项目详情（loadProject 填充；{} 避免模板 null.title 崩）
+    // 项目详情（loadProject 整体替换）。默认形状镜像 GET /projects/{id} 的 ProjectDetail
+    // 响应 {project, facts, intents, hints}——graph 视图直接读 project.project.* /
+    // project.facts.length / project.hints.length 等嵌套键，缺形状在挂载求值时整块崩
+    // （前端状态守护测试锁定）
+    project: {
+      project: {
+        id: '', title: '', status: '', engineered_report_status: '',
+        task_mode: '', reason: '', paused: false,
+        task_budget: null, deadline_at: null, created_at: null,
+      },
+      facts: [], intents: [], hints: [],
+    },
     vulns: [],              // 当前/全部漏洞列表（loadVulns 填充）
     vulnsLoading: false,
     showVulnDetail: false,
-    vulnDetail: {},
+    // 漏洞详情弹窗（openVulnDetail 整体替换；index.html 直接读嵌套键，缺形状在打开
+    // 弹窗/首帧求值时崩）
+    vulnDetail: {
+      id: '', project_id: '', fact_id: '', intent_id: '', title: '',
+      severity: '', status: '', kind: '', score: 0, url: '',
+      description: '', evidence: '', reproduction: '', impact: '',
+      recommendation: '', created_at: '', verified_at: '',
+      quality: null,
+    },
     projects: [],
     projectSearch: '',
     graphSearch: '',
@@ -78,6 +97,9 @@ function sharpApp() {
     // ── 通用对话框 ──────────────────────────────────────────────────────
     uiConfirm: { show: false, title: '', message: '', okText: '确定', danger: false, onOk: null },
     uiPrompt: { show: false, title: '', placeholder: '', value: '', onOk: null },
+    // Toast（showToast 运行时整体赋值；提前声明避免首帧 x-show/x-text 求值失败 →
+    // index.html 内联模板 toast.message 报 ReferenceError，前端状态守护锁定）
+    toast: { show: false, message: '', type: 'info' },
     factCorrection: { open: false, busy: false, description: '', untrusted: false, note: '', edits: [] },
     acceptance: null,
     acceptanceLoading: false,
@@ -89,17 +111,17 @@ function sharpApp() {
     newProject: { title: '', origin: '', goal: '', hints: [{ content: '' }], targetKind: 'web', assetRef: '', taskMode: 'pentest' },
     intentForm: { description: '' },
     completeForm: { description: '' },
-    concludeForm: { description: '' },
-    reopenForm: { description: '' },
+    concludeForm: { description: '', intentId: '' },
+    reopenForm: { projectId: '', projectTitle: '', description: '' },
     hintForm: { content: '' },
-    renameForm: { title: '' },
+    renameForm: { projectId: '', originalTitle: '', title: '' },
     emergencyForm: {},
     approvalActionNote: '',
-    settingsForm: {},
+    settingsForm: { intent_timeout: '', reason_timeout: '', report_instructions: '' },
     // localPrefs 细结构：loadLocalPrefs 会读 .actor_name/.layout_mode/.layout_dir，
     // 空对象会让 .actor_name.trim() 抛错中断 init → 必须带默认初值
     localPrefs: { actor_name: '', layout_mode: 'dagre_tb', layout_dir: '' },
-    pwForm: {},
+    pwForm: { old: '', new1: '', new2: '' },
     // 修改密码的两个状态（设置页 x-text 直接读——漏声明会让按钮文字变空白，已由
     // 前端状态守护测试锁定，勿删）
     pwLoading: false,
@@ -107,10 +129,21 @@ function sharpApp() {
     dispatcherMode: 'anthropic',  // 设置页下拉默认（模板 x-model + x-if 面板依赖；'' 会导致面板全空）
 
     // ── 回放 / 图形（x-model 对象）──────────────────────────────────
-    replay: {},
-    npPage: { showAddForm: false, editingIdx: -1, customTemplates: [], addTitle: '', addOrigin: '', addGoal: '' },
+    replay: { active: false, playing: false, stepMs: '1100' },
+    npPage: {
+      showAddForm: false, editingIdx: -1, customTemplates: [],
+      addTitle: '', addOrigin: '', addGoal: '',
+      // 编辑模板表单（startEditTemplate 赋值 {name,origin,goal}；index.html 模板
+      // 直接读 .name/.origin/.goal 及 .name.trim()，缺形状首帧崩溃）
+      editForm: { name: '', origin: '', goal: '' },
+    },
     exportTab: 'yaml',
     exportProjectId: '',
+    // YAML 预览弹窗（openYamlPreview 赋值；index.html 内联模板直接 x-text/x-html 读取，
+    // 完全未声明会在首帧报 ReferenceError）
+    yamlPreviewTitle: '',
+    yamlPreviewHtml: '',
+    yamlPreviewText: '',
     reportDraftingProjectId: '',
     deleteConfirm: { id: '', title: '' },
     isDeletingProject: false,
@@ -144,12 +177,44 @@ function sharpApp() {
     approvalStats: {},         // loadApprovals 赋值；{} 防模板 ?? 前 undefined
 
     // ── 对话 / 应用分析 ─────────────────────────────────────────────────
-    androidChat: { sessions: [], messages: [], streaming: false, sessionId: '' },
-    chat: { sessions: [], messages: [], sessionId: '', role: 'assistant', context: '' },
+    // 对话 / 应用分析：完整默认形状（各状态在对应页面/重置函数里整体替换；缺键会让
+    // 常驻 DOM 的模板首帧求值失败——x-show 视图也求值，前端状态守护锁定）
+    androidChat: {
+      sessionId: '', apkFilename: '', messages: [], input: '',
+      streaming: false, streamBuffer: '', abortController: null,
+      linkedProjectId: '', _msgIdSeq: 0, sessions: [], showHistory: false,
+      dynamicMode: false, dynamicStarting: false, dynamicContainer: '',
+      dynamicDevice: '', dynamicReady: false,
+    },
+    chat: { sessions: [], messages: [], sessionId: '', role: 'assistant', context: '', input: '', projectId: '', streaming: false, streamBuffer: '' },
     liveOutput: { active: false, intentId: '', worker: '', text: '' },
-    miniProgram: { dispatching: false, harDispatching: false, harTargetProject: 'new' },
-    android: { dispatching: false },
-    secretsForm: {},
+    // harTargetProject 默认 'auto'（与 resetMiniProgramAnalysis / 下拉首选值一致；
+    // 历史上曾写 'new'，会让首次打开分析页静默落到"新建独立项目"）
+    miniProgram: {
+      file: null, filename: '', loading: false, scanning: false,
+      result: null, tab: 'findings', query: '',
+      packages: [], selectedPath: '', scanSummary: '', source: 'upload',
+      unpacking: false, unpackOutputDir: '', unpackResult: null,
+      dispatching: false, dispatchResult: null,
+      harFile: null, harFilename: '', harDispatching: false,
+      harDispatchResult: null, harTargetProject: 'auto',
+    },
+    android: {
+      path: '', loading: false, uiPane: 'result', uploading: false,
+      result: null, tab: 'domains', query: '',
+      dispatching: false, dispatchResult: null,
+      browser: {
+        loaded: false, loading: false, rel: '', crumbs: [], parent_rel: '',
+        at_home: true, dirs: [], files: [], truncated: false,
+      },
+    },
+    // 密钥表单：字段必须给空串初值——saveServerSecrets() 直接 .trim()，
+    // 未填写字段为 undefined 时会抛 TypeError（发生在 try 块外→保存静默失败）
+    secretsForm: {
+      SHARP_ANTHROPIC_AUTH_TOKEN: '', SHARP_MODEL: '', SHARP_BASE_URL: '',
+      OPENAI_API_KEY: '', OPENAI_BASE_URL: '', OPENAI_MODEL: '',
+      PI_API_KEY: '', PI_BASE_URL: '', PI_MODEL: '',
+    },
     secretsStatus: [],
     secretsPath: '',
     dispatcherRestarting: false,
@@ -158,7 +223,15 @@ function sharpApp() {
     mcpSaving: false,          // MCP 保存中状态（保存按钮 x-text 依赖，漏声明=按钮空白）
 
     mcpServers: [],
-    mcpEditor: { show: false, editing: null },
+    // form 默认键集 = app.chat.js 的 _emptyMcpForm()（打开编辑器时整体替换；
+    // 提前声明避免常驻模板首帧读 mcpEditor.form.name 崩溃）
+    mcpEditor: {
+      show: false, editing: null,
+      form: {
+        name: '', transport: 'http', url: '', headers: [], command: '',
+        args: [], env: [], enabled: true, max_tools: 100,
+      },
+    },
     dispatcherStatus: [],      // 数组：模板 x-for 遍历 dispatcher 状态条目
     dispatcherStatusLoading: false,
 

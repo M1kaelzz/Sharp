@@ -78,22 +78,22 @@
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-sm font-semibold text-slate-700">模型用量成本</h3>
         <span class="text-[11px] text-slate-400 tabular-nums"
-          x-text="`${usageSummary.total_calls} 次调用`"></span>
+          x-text="`${usageSummary?.total_calls ?? 0} 次调用`"></span>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- 金额卡 -->
         <div class="flex flex-col justify-center gap-2">
           <div class="flex items-baseline gap-2">
             <span class="text-3xl font-semibold text-slate-800 tabular-nums"
-              x-text="usageCostFmt(usageSummary.total_cost_usd)"></span>
+              x-text="usageCostFmt(usageSummary?.total_cost_usd)"></span>
             <span class="text-xs text-slate-400">累计</span>
           </div>
           <div class="flex items-center gap-3 text-xs tabular-nums">
             <span class="text-slate-500">今日
-              <span class="font-semibold text-slate-700" x-text="usageCostFmt(usageSummary.today_cost_usd)"></span></span>
+              <span class="font-semibold text-slate-700" x-text="usageCostFmt(usageSummary?.today_cost_usd)"></span></span>
             <span class="flex items-center gap-1"
-              :class="usageSummary.today_cost_usd > usageSummary.yesterday_cost_usd ? 'text-rose-500' : 'text-emerald-600'">
-              <span x-text="usageSummary.today_cost_usd > usageSummary.yesterday_cost_usd ? '↗' : '↘'"></span>
+              :class="(usageSummary?.today_cost_usd ?? 0) > (usageSummary?.yesterday_cost_usd ?? 0) ? 'text-rose-500' : 'text-emerald-600'">
+              <span x-text="(usageSummary?.today_cost_usd ?? 0) > (usageSummary?.yesterday_cost_usd ?? 0) ? '↗' : '↘'"></span>
               <span class="font-semibold" x-text="usageDeltaFmt()"></span>
             </span>
           </div>
@@ -126,13 +126,13 @@
           <div>
             <svg class="w-full h-14" x-html="usageTrendSvg()"></svg>
             <div class="flex justify-between text-[10px] text-slate-400 tabular-nums mt-0.5">
-              <span x-text="usageSummary.trend?.[0]?.day?.slice(5) || ''"></span>
-              <span x-text="usageSummary.trend?.[usageSummary.trend.length - 1]?.day?.slice(5) || ''"></span>
+              <span x-text="usageSummary?.trend?.[0]?.day?.slice(5) || ''"></span>
+              <span x-text="usageSummary?.trend?.[(usageSummary?.trend?.length ?? 0) - 1]?.day?.slice(5) || ''"></span>
             </div>
           </div>
-          <div class="flex flex-col gap-1 text-xs min-w-0" x-show="usageSummary.top_projects.length > 0">
+          <div class="flex flex-col gap-1 text-xs min-w-0" x-show="(usageSummary?.top_projects?.length ?? 0) > 0">
             <span class="text-[11px] text-slate-400">烧钱 TOP 项目</span>
-            <template x-for="tp in usageSummary.top_projects" :key="tp.project_id">
+            <template x-for="tp in (usageSummary?.top_projects || [])" :key="tp.project_id">
               <div class="flex items-center justify-between gap-2 cursor-pointer hover:bg-slate-50 rounded-lg px-1.5 py-0.5 transition"
                 @click="openProject(tp.project_id)">
                 <span class="text-slate-600 truncate" x-text="projectTitleById(tp.project_id)"></span>

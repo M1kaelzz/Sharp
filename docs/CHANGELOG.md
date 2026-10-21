@@ -19,6 +19,50 @@ AIGC:
 
 ## 2026-10-19
 
+### 前端状态收口批次：补齐全部声明 + 守护覆盖嵌套/index.html（946 全绿）
+
+**来源**：上一批（c5584bd）修完设置页按钮空白后，Playwright 实测仍见约 30 条
+控制台报错。排查确认：不是本批引入，而是历史遗留的**状态声明不完整**——所有视图
+常驻 DOM（x-show 只藏不求值豁免），嵌套键缺失（`miniProgram.packages`、
+`android.browser.loaded`、`mcpEditor.form.name` 等）每次加载刷 TypeError。
+
+**盘点（一次性脚本，只读）**：合并全部声明来源（app.js 字面量 + 模块 Object.assign
++ 方法内赋值）后交叉比对 12 视图 + index.html 的强求值表达式 → 精确 46 处缺口，
+分三档。
+
+**改动**：
+- `app.js` 补齐**完整声明形状**（默认值不改变正常路径行为，各页面/重置函数仍整体替换）：
+  - 持久 UI 状态：`miniProgram`（20 键，canonical 自 resetMiniProgramAnalysis）、
+    `android`（8 键 + `browser` 9 键）、`androidChat`（15 键）、`chat`（+input/
+    projectId/streaming/streamBuffer）、`npPage`（+editForm）、`mcpEditor`（+form，
+    键集 = `_emptyMcpForm()`）；
+  - 表单：`pwForm`（old/new1/new2）、`secretsForm`（9 个 env 键，**修真实 bug**：
+    saveServerSecrets() 直接 `.trim()`，字段未填时 undefined → 抛 TypeError 且发生在
+    try 块外 → 保存静默失败）、`settingsForm`、`concludeForm/renameForm/reopenForm`；
+  - 弹窗/数据：`vulnDetail`（17 键）、`project`（镜像 ProjectDetail 响应
+    {project,facts,intents,hints}，graph 视图 38 处直接读嵌套键）、`replay`、`toast`（新增，
+    index.html 内联模板曾 ReferenceError）、`yamlPreviewTitle/Html/Text`（新增）；
+  - **决策（用户确认）**：`harTargetProject` 默认 `'new'`→`'auto'`（与重置函数/下拉
+    首选值一致，首次打开分析页不再静默落"新建独立项目"）；
+- `dashboard.html` 成本带 `usageSummary` 9 处加 `?.`/`??` 收口（保留 null 语义，
+  `x-show` 判空逻辑不动）；
+- `index.html` v73→74。
+
+**守护测试升级（`test_frontend_state_guard.py` 4→6 用例）**：
+- 扫描面扩到 `index.html`；从"根标识符"扩到"嵌套键逐段校验"（对象字面量根）；
+- 解析器对**字符串/注释/正则/嵌套模板字面量**感知（`/['"`] 类正则与
+  `` `a ${x.map(v => `<b>${v}</b>`)}` `` 曾让括号匹配跳跃数千字符）；
+- 新增 2 个专项：`usageSummary` 空值读取防线（只扫裸读）；突变门（改名
+  `android.browser` 必须报错）；
+- 全量扫描从"600+ 误报净化到零误报再到 0 缺口"。
+
+**验证**：全量 **946 全绿**（944+2）；check_methods/check_docs 通过；Playwright 实测
+（真实库副本登录）：控制台 Alpine 报错 **33→0**（仅剩 2 条环境性：dev 目录无
+dispatch.yaml 的 404，与本批无关）；设置页「修改密码 / 保存 MCP 配置」按钮文字
+恢复正常（核心用户诉求）；应用分析页初始状态正确（扫描/上传按钮不再崩溃）。
+
+---
+
 ### 前端修复批次：设置页空白按钮 + 漏洞图表移植到漏洞模块 + 前端状态守护
 
 **来源**：用户反馈两件事——①设置页「修改密码」「保存 MCP 配置」按钮变成空白灰块
