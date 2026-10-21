@@ -21,7 +21,7 @@ DEFAULT_CONFIG = ROOT / "dispatch.yaml"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_TITLE = "Sharp"
-LAUNCHER_VERSION = "2026-10-20-arch-aware-worker-image"
+LAUNCHER_VERSION = "2026-10-21-mirror-safe-frozen"
 SECRET_KEYS = ("SHARP_ANTHROPIC_AUTH_TOKEN",)
 
 
@@ -96,16 +96,32 @@ def project_args() -> list[str]:
     return ["--project", str(PROJECT)]
 
 
+def uv_run_cli(*args: str) -> list[str]:
+    """``uv run --frozen`` against the runtime project.
+
+    --frozen 在本启动器里是承重参数（sync_project 同理）：run.sh 会向整个
+    进程树注入清华镜像（``UV_DEFAULT_INDEX``），而 uv.lock 记录的包源是
+    pypi.org。非 frozen 的 uv 会在当前索引下重新解析——``uv run`` 会静默把
+    uv.lock 整份重写成镜像源（实测 369 行 diff，仓库与 CI 同遭污染）。
+    所有 ``uv run`` 必须走本函数；锁的新鲜度校验由 CI 的
+    ``uv sync --locked``（无镜像环境）承担。
+    """
+    return uv_cmd("run", "--frozen", *project_args(), "sharp", *args)
+
+
 def sync_project(*, desktop: bool) -> None:
     cmd = uv_cmd("sync", *project_args())
     if desktop:
         cmd.extend(["--extra", "desktop"])
-    cmd.append("--locked")
+    # --frozen 而非 --locked：镜像 env 下 --locked 会因重新解析与锁源不一致
+    # 直接报 "lockfile needs to be updated"（首次真实 ./run.sh 启动即触发）。
+    # --frozen 按锁原样安装、永不触锁，镜像只影响下载源。
+    cmd.append("--frozen")
     run_checked(cmd)
 
 
 def run_raw_cli(args: list[str]) -> int:
-    return subprocess.call(uv_cmd("run", *project_args(), "sharp", *args), cwd=ROOT)
+    return subprocess.call(uv_run_cli(*args), cwd=ROOT)
 
 
 def run_checked(cmd: list[str]) -> None:
@@ -647,14 +663,14 @@ def run_app(extra: list[str]) -> int:
     server_url = f"http://{ns.host}:{ns.port}"
     print(f"[sharp] starting desktop app on {server_url} ...", flush=True)
     window = start_managed(
-        uv_cmd("run", *project_args(), "sharp", "window", "--host", ns.host, "--port", str(ns.port), "--title", ns.title)
+        uv_run_cli("window", "--host", ns.host, "--port", str(ns.port), "--title", ns.title)
     )
     print("[sharp] waiting for the local API...", flush=True)
     wait_for_server(server_url, window)
 
     print(f"[sharp] starting dispatcher with {cfg} ...", flush=True)
     dispatcher = start_managed(
-        uv_cmd("run", *project_args(), "sharp", "dispatch", "--config", str(cfg), "--server", server_url)
+        uv_run_cli("dispatch", "--config", str(cfg), "--server", server_url)
     )
     return supervise(window, dispatcher, primary_name="desktop app", secondary_name="dispatcher")
 
@@ -678,7 +694,7 @@ def run_web(extra: list[str]) -> int:
     server_url = f"http://{ns.host}:{ns.port}"
     print(f"[sharp] starting web UI on {server_url} ...", flush=True)
     server = start_managed(
-        uv_cmd("run", *project_args(), "sharp", "serve", "--host", ns.host, "--port", str(ns.port), "--no-access-log")
+        uv_run_cli("serve", "--host", ns.host, "--port", str(ns.port), "--no-access-log")
     )
     wait_for_server(server_url, server)
 
@@ -694,7 +710,7 @@ def run_web(extra: list[str]) -> int:
     if not ns.no_dispatch:
         print(f"[sharp] starting dispatcher with {cfg} ...", flush=True)
         dispatcher = start_managed(
-            uv_cmd("run", *project_args(), "sharp", "dispatch", "--config", str(cfg), "--server", server_url)
+            uv_run_cli("dispatch", "--config", str(cfg), "--server", server_url)
         )
     return supervise(server, dispatcher, primary_name="web server", secondary_name="dispatcher")
 

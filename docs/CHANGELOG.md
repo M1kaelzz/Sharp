@@ -17,6 +17,54 @@ AIGC:
 
 ---
 
+## 2026-10-21
+
+### 修复：run.sh 镜像 × uv --locked 冲突（首次真实启动即炸）——启动器全程 --frozen
+
+**来源**：用户首次真实执行 `./run.sh`（desktop 桌面模式），环境预检全绿后在
+`uv sync --extra desktop --locked` 处报 `The lockfile at 'uv.lock' needs to be
+updated, but '--locked' was provided`。
+
+**根因（对照实验实锤）**：
+- `run.sh` 为整个进程树注入清华镜像（`export UV_DEFAULT_INDEX=...tuna...`，第 194 行），
+  而 `uv.lock` 记录的所有包源是 `registry = "https://pypi.org/simple"`；
+- `--locked` 的校验方式是**按当前环境重新解析一遍再与锁比对**——索引被换成镜像后
+  解析出的源与锁不一致 → 判定锁"过期" → 带 `--locked` 时直接硬失败；
+- 对照实验：同一命令无镜像 env **通过**（正常装齐 pywebview+pyobjc），注入镜像
+  env **复现用户报错**；
+- 之前从未暴露：历届测试均用裸 `uv run`（无镜像 env）、CI 也在无镜像环境跑
+  `uv sync --locked`；run.sh 批次当时只有 mock 契约测试（12 例），未真实起过。
+
+**连带发现并实证的第二个隐患**：镜像 env 下不带 frozen 的 `uv run` 会**静默重写
+uv.lock**（实测 369 行 diff：所有 source/sdist URL 从 pypi.org 改成镜像）——就算只修
+sync，后续 `uv run sharp window` 仍会污染锁文件、进而炸 CI。已当场还原。
+
+**修复**（`./sharp`，LAUNCHER_VERSION → `2026-10-21-mirror-safe-frozen`）：
+- `sync_project()`：`--locked` → `--frozen`（按锁原样安装、不做新鲜度重解析；
+  镜像 env 下实测 `Checked 37 packages in 2ms` 通过）；
+- 新增 `uv_run_cli()` 帮助函数作为**全部 `uv run` 的统一 `--frozen` 出口**，
+  5 处调用点收编（run_raw_cli / window / dispatch×2 / serve）——杜绝新增调用点
+  忘带 frozen；
+- 锁的新鲜度校验职责**保留在 CI**（`.github/workflows/tests.yml` 的
+  `uv sync --locked`，无镜像环境，语义正确）；
+- 文档同步：ARCHITECTURE 概述新增「镜像安全」注记 + §11 测试说明更新、
+  pyproject `[dependency-groups]` 注释更新为 frozen 语义；README 测试段落的
+  `uv sync --locked` 属开发者手动场景（cd runtime 无镜像），保持不变。
+
+**新增守护：`tests/test_launcher_uv_frozen.py`（4 用例）**：
+- sync 用 frozen 且启动器全文禁用 `--locked`；
+- `uv_cmd("run"` 只允许出现在 `uv_run_cli` 帮助函数体内（旁路=静默重锁风险）；
+- 两个突变门：--frozen 换回 --locked / 绕过帮助函数直接 uv_cmd("run" 必须
+  让守护失败。
+
+**验证**：镜像 env + `uv sync --extra desktop --frozen` 通过；镜像 env +
+`./sharp serve --help`（走 run_raw_cli→frozen 出口）正常且 uv.lock 未被触碰；
+镜像 env + `uv run --frozen` 正常且锁文件零改动；`python3 -m py_compile sharp`；
+README 双语/ARCHITECTURE/pyproject 注释一致；check_docs/check_methods 通过；
+全量 **950 全绿**（946+4）。
+
+---
+
 ## 2026-10-19
 
 ### 前端状态收口批次：补齐全部声明 + 守护覆盖嵌套/index.html（946 全绿）

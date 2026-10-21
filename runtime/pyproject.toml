@@ -30,11 +30,13 @@ build-backend = "uv_build"
 
 [dependency-groups]
 # Kept empty ON PURPOSE — test tools are never locked into the runtime venv.
-# The launcher runs `uv sync --locked` (which would otherwise install the dev
-# group into the runtime venv on every `./sharp` start) and CI mirrors that
-# with `uv sync --project runtime --locked`. pytest/httpx (HTTP-layer ASGI
-# tests) are pulled ephemerally per run instead — see the canonical command
-# below in [tool.pytest.ini_options].
+# The launcher runs `uv sync --frozen` (installs exactly the locked set; a dev
+# group here would install into the runtime venv on every `./sharp` start, and
+# --locked would hard-fail under run.sh's UV_DEFAULT_INDEX mirror since
+# uv.lock records pypi.org as the package source). Lock freshness stays
+# guarded by CI's `uv sync --project runtime --locked` (no mirror env).
+# pytest/httpx (HTTP-layer ASGI tests) are pulled ephemerally per run instead
+# — see the canonical command below in [tool.pytest.ini_options].
 dev = []
 
 # Canonical test command (CI + local):

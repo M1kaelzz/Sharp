@@ -54,6 +54,15 @@ Sharp 由三个角色组成，靠 HTTP + 共享 SQLite 协作：
 
 `./sharp web` 启动器同时拉起 server + dispatcher（单实例，单机各一个）。
 
+> **镜像安全（2026-10-21）**：`run.sh` 会向整个进程树注入清华镜像（`UV_DEFAULT_INDEX`），
+> 而 `uv.lock` 记录的包源是 pypi.org——**任何非 `--frozen` 的 uv 命令都会在当前索引下
+> 重新解析**：`uv sync --locked` 直接报 `lockfile needs to be updated`（首次真实
+> `./run.sh` 启动即触发）；`uv run` 更糟，会**静默把 uv.lock 整份重写成镜像源**
+> （实测 369 行 diff）。因此启动器的全部 uv 调用（`sync_project` + `uv_run_cli`
+> 帮助函数统一出口）一律 `--frozen`：按锁原样安装、永不触锁，镜像只影响下载源；
+> 锁的新鲜度校验由 CI 的 `uv sync --locked`（无镜像环境）承担。守护测试
+> `tests/test_launcher_uv_frozen.py` 锁定该契约。
+
 ---
 
 ## 2. 证据—行动图模型
@@ -1304,7 +1313,7 @@ HTTP 响应体、报错、文件内容、banner 里都可以塞指令（提示�
 
 ## 11. 测试与工程
 
-- 测试：`uv run --project runtime --with pytest --with httpx pytest`（pytest/httpx 有意不锁进 uv.lock，见 `runtime/pyproject.toml` 注释与 `[dependency-groups]` 说明；锁进会破坏 launcher 的 `uv sync --locked` 并污染 runtime venv）
+- 测试：`uv run --project runtime --with pytest --with httpx pytest`（pytest/httpx 有意不锁进 uv.lock，见 `runtime/pyproject.toml` 注释与 `[dependency-groups]` 说明；锁进 dev 组会被 launcher 的 `uv sync --frozen` 装进 runtime venv——镜像安全背景见概述章「镜像安全」注记）
 - CI：`.github/workflows/tests.yml` 在 push/PR 动 `runtime/**` 时跑 pytest（同命令、同 ephemeral 模式）
 - 覆盖重点：DB 迁移、intent 幂等、SSE 线程安全、KILL-1、输出解析、reason 重试、审批门禁（server 强制 + HTTP 层）、容器生命周期（假 docker client）、调度决策拦截分支、HTTP 层 ASGI、证据纠错审计、验收盘点、阶段估算启发式、资产接口账本与覆盖注入、聊天留存裁剪（2026-09-06 共 142 passed）
 - CI 前端校验：`scripts/check_methods.py`（含修饰符链）在 tests.yml 随 push/PR 跑（`runtime/**` 与 `scripts/**` 变更触发）
