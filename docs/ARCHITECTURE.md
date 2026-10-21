@@ -547,6 +547,18 @@ holder（从 dispatcher_id 解析本机 PID，8s 退出预算；优雅退出释�
 的 time_ordering 三桶分级：absent（双快照竞态窗口新 fact）→ 最新；有 created_at →
 时间倒序；映射内空串（批10 前老行）→ 最旧（列表序 tie-break，全旧库退化为旧行为）
 
+##### 配置热加载（P2，`runtime.config_hot_reload` 默认关，2026-10-21）
+
+`DispatcherLoop.__init__` 只加载一次配置的历史行为是设置页"重启 Dispatcher 生效"
+的唯一根因（MCP servers 等本就按任务现取）。开启后每 tick 以 `(mtime_ns, size)`
+指纹探测 dispatch.yaml + secrets.env，变化即 `DispatchConfig.load()` 原地替换
+`self.config`——新任务立即用新 MCP / worker 选择 / secrets / interval。刻意语义：
+启动器 pin 的 `server` 覆盖重载后重新应用；secrets 重载走 `override=True`（启动时
+env 胜、重载时文件胜，仅 SECRET_KEYS 白名单内键）；任何重载失败只告警保留旧配置
+（半写态文件打不死循环）；线程池 / 容器配置 / `ha_standby` 不热加载。开关自身可
+被热加载开关（首 tick 只热身指纹不触发重载）。守护
+`tests/test_config_hot_reload.py`（含关态对象身份 pin）。
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线

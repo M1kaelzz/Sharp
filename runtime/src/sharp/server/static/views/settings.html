@@ -57,7 +57,7 @@
             class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
           <p class="text-[10px] text-slate-400 mt-1" x-text="secretConfigured('SHARP_BASE_URL') ? '当前：' + secretMasked('SHARP_BASE_URL') : '使用默认值'"></p>
         </div>
-        <p class="text-[11px] text-slate-400">保存后需重启 Dispatcher 才会对 Worker 任务生效；<span class="text-emerald-600">App 对话 AI 接口保存后立即生效，无需重启。</span></p>
+        <p class="text-[11px] text-slate-400">保存后需重启 Dispatcher 才会对 Worker 任务生效（dispatch.yaml 开启 <code>runtime.config_hot_reload</code> 后约 3 秒自动生效）；<span class="text-emerald-600">App 对话 AI 接口保存后立即生效，无需重启。</span></p>
       </div>
       </template>
 
@@ -83,7 +83,7 @@
             class="w-full px-3 py-2 border border-slate-200 rounded-xl bg-white text-sm focus:outline-none focus:ring-2 focus:ring-brand-100 focus:border-brand-400 transition placeholder:text-slate-300">
           <p class="text-[10px] text-slate-400 mt-1" x-text="secretConfigured('OPENAI_BASE_URL') ? '当前：' + secretMasked('OPENAI_BASE_URL') : '使用默认地址'"></p>
         </div>
-        <p class="text-[11px] text-slate-400">保存后需重启 Dispatcher 才会对 Worker 任务生效。</p>
+        <p class="text-[11px] text-slate-400">保存后需重启 Dispatcher 才会对 Worker 任务生效（dispatch.yaml 开启 <code>runtime.config_hot_reload</code> 后约 3 秒自动生效）。</p>
       </div>
       </template>
 

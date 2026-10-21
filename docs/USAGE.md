@@ -95,6 +95,8 @@ cp secrets.env.example datas/sharp/secrets.env   # 模板在仓库根目录
 2. 填入对应的 API Token、模型名、Base URL
 3. 点击保存，然后重启 Dispatcher
 
+> 💡 若开启了 [`runtime.config_hot_reload`](#33-dispatchyaml-配置高级)（默认关），保存后约 3 秒自动生效，无需重启。
+
 ### 3.3 dispatch.yaml 配置（高级）
 
 `dispatch.yaml` 是调度器的主配置文件，关键配置项：
@@ -106,6 +108,10 @@ runtime:
   max_running_projects: 3  # 同时在跑的项目数
   max_project_workers: 4   # 单项目最大 Worker 数
   healthcheck_timeout: 60  # 健康检查超时（秒）
+  # P2 配置热加载（默认关）：开启后每 tick（~3s）重读 dispatch.yaml + secrets.env
+  # 并原地换配置——设置页改 MCP / Worker 模式 / 密钥后对**新任务**约 3 秒生效，
+  # 不再需要重启 Dispatcher。注意：线程池大小 / 容器配置 / ha_standby 不热加载。
+  config_hot_reload: false
 
 tasks:
   bootstrap:
@@ -743,7 +749,7 @@ Sharp-v2 支持为 claude code agent 注入外部 MCP（Model Context Protocol�
 - **启用**：是否启用该 server（默认启用）
 - **最大工具数**：工具数上限，超限的 server 被跳过（默认 100）
 
-保存后需重启 Dispatcher 生效。
+保存后需重启 Dispatcher 生效（若已开启 `runtime.config_hot_reload`，保存后约 3 秒自动生效）。
 
 <details>
 <summary>手动编辑 dispatch.yaml（传统方式）</summary>

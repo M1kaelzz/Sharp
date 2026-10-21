@@ -19,6 +19,40 @@ AIGC:
 
 ## 2026-10-21
 
+### P2｜配置热加载（config_hot_reload，默认关闭）——设置页"保存后需重启"的新解法
+
+**来源**：用户问"不能热加载启动 dispatcher 吗"。排查实锤两个根因：配置
+（dispatch.yaml + secrets.env）只在 `DispatcherLoop.__init__` 加载一次并全程冻结
+——这是设置页"重启 Dispatcher 生效"提示的唯一原因；而 MCP servers 等本来就是
+**每任务现取**（`tasks/common.py:861`），循环中段原地换 `self.config` 新任务即生效。
+
+**开关**：`dispatch.yaml` 的 `runtime.config_hot_reload: false`（默认关 = 与历史
+行为逐字节等价，已用对象身份断言锁定）。开：每 tick（~3s）用 (mtime_ns, size)
+指纹探测两文件，变化即 `DispatchConfig.load()` 原地替换 `self.config`。
+
+**刻意语义**（每条有测试）：
+- 启动器 pin 的 `server` 覆盖在重载后重新应用（yaml 抢不回）；
+- secrets 重载走 `override=True`——**启动时**进程 env 胜（CI/测试惯例），**重载时**
+  文件胜（设置页就是正在改文件的人；只影响 SECRET_KEYS 白名单内的键）；
+- 重载失败（半写态 yaml / 校验错）只告警、保留旧配置，下一 tick 自动重试——坏文件
+  永远打不死调度循环；
+- init 期定型字段（线程池 / 容器配置 / `ha_standby`）不热加载——HA 开关 mid-run
+  翻转会把仲裁角色翻成不可读状态；
+- 关闭态下写坏 yaml 与历史完全一致（不触发任何读取）。
+
+**改动**：`config.py` 加字段；`loop.py` 加 `_config_fingerprint()`/
+`_maybe_reload_config()` 并在 `run()` 每 tick 顶部调用；`dispatch.yaml` 注释样例；
+设置页两处提示改为提及热加载选项。
+
+**新增守护 `tests/test_config_hot_reload.py`（6 用例）**：默认关；关=冻结（对象
+身份 pin）；开=换配置且 server 覆盖保留；secrets 文件胜过 env（先发现
+`read_secrets_file` 有 SECRET_KEYS 白名单，测试以扩展白名单方式注入探针键）；坏
+yaml 保留旧配置+恢复后重试；`run()` 接线守护（reload 在任何派发决策前）。
+
+**验证**：全量 958（952+6）。
+
+---
+
 ### 修复：dispatcher 首次真实启动 NameError（HA 批笔误）——测试盲区补真实 __init__ 路径（952 全绿）
 
 **来源**：`./run.sh` 镜像修复（2e41b4c）后用户重跑，sync/桌面/等待 API 全部通过，

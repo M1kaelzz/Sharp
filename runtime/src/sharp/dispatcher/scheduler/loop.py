@@ -16,6 +16,7 @@ from sharp.dispatcher.protocol.client import SharpClient
 from sharp.dispatcher.runtime.cancellation import TaskCancellation
 from sharp.dispatcher.runtime.containers import ContainerManager
 from sharp.dispatcher.runtime.startup_healthcheck import format_failure_summary, run_startup_healthchecks
+from sharp.secrets import load_secrets_file, resolve_secrets_file
 from sharp.dispatcher.scheduler.provider_health import suspension_for_outcome
 from sharp.dispatcher.scheduler.worker_select import choose_worker
 from sharp.dispatcher.tasks.bootstrap import run_bootstrap_task
@@ -152,6 +153,12 @@ class DispatcherLoop:
         # because every test bypassed __init__ via DispatcherLoop.__new__.
         self._ha_enabled = bool(self.config.runtime.ha_standby)
         self._ha_active = not self._ha_enabled
+        # P2 config hot-reload (2026-10-21): (mtime_ns, size) fingerprints of
+        # (dispatch.yaml, secrets.env) as seen by the LAST reload / first tick.
+        # None until _maybe_reload_config() runs its first tick — reload only
+        # ever triggers on a CHANGE from the captured fingerprint, so enabling
+        # the flag mid-run (itself a reload) warms up without a false reload.
+        self._config_watch: tuple[tuple[int, int], tuple[int, int]] | None = None
 
     def close(self) -> None:
         if self.futures:
@@ -204,11 +211,67 @@ class DispatcherLoop:
             pass
         self.client.close()
 
+    def _config_fingerprint(self) -> tuple[tuple[int, int], tuple[int, int]]:
+        """Cheap change probe for (dispatch.yaml, secrets.env) via (mtime_ns, size)."""
+        def _fp(path: Path) -> tuple[int, int]:
+            try:
+                st = path.stat()
+                return (st.st_mtime_ns, st.st_size)
+            except FileNotFoundError:
+                return (0, 0)
+        return (_fp(self.config_path), _fp(resolve_secrets_file()))
+
+    def _maybe_reload_config(self) -> None:
+        """P2 config hot-reload (2026-10-21, runtime.config_hot_reload, default OFF).
+
+        Each tick: fingerprint dispatch.yaml + secrets.env; on change, reload
+        DispatchConfig and swap ``self.config`` IN PLACE so newly dispatched
+        tasks pick up new MCP servers / workers / secrets / interval right
+        away (config is read per-task, e.g. tasks/common.py's mcp_servers).
+
+        Deliberate semantics:
+        - The ``server`` override given to __init__ is re-applied (the
+          launcher pins the server URL; dispatch.yaml never wins it back).
+        - secrets are re-applied with override=True: boot-time load lets real
+          process env win (CI/tests), but on RELOAD the file is authoritative —
+          the settings page is the writer being waited on here.
+        - Any reload failure (partial write mid-rewrite, validation error) is
+          logged and the PREVIOUS config is kept; the next tick retries. A
+          broken file therefore can never kill the loop.
+        - Init-time-frozen fields stay frozen even when the yaml changes them:
+          thread-pool sizes (executor), ContainerManager, and the HA flag
+          (self._ha_enabled is process semantic, re-reading it mid-run would
+          flip arbitration roles illegibly).
+        """
+        if not self.config.runtime.config_hot_reload:
+            return
+        watch = self._config_fingerprint()
+        if self._config_watch is None:
+            self._config_watch = watch
+            return
+        if watch == self._config_watch:
+            return
+        try:
+            load_secrets_file(override=True)
+            fresh = DispatchConfig.load(self.config_path)
+            server = self.config.server
+            self.config = fresh.model_copy(update={"server": server})
+            self._config_watch = watch
+            LOG.info(
+                "config hot-reloaded: workers=%d mcp_servers=%d interval=%ss",
+                len(self.config.workers),
+                len([s for s in self.config.mcp_servers if s.enabled]),
+                self.config.runtime.interval,
+            )
+        except Exception:
+            LOG.warning("config hot-reload failed; keeping previous config", exc_info=True)
+
     def run(self, once: bool = False) -> None:
         try:
             self.run_startup_healthchecks()
             while True:
                 try:
+                    self._maybe_reload_config()
                     if not self._settings_checked:
                         self._validate_server_settings()
                         self._settings_checked = True

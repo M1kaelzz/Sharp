@@ -271,6 +271,14 @@ class RuntimeConfig(BaseModel):
     # standby may take over. >= 3s; default 15s (~5 ticks at interval=3s, so a
     # transient network blip does not trigger a false takeover).
     ha_takeover_after: int = Field(default=15, ge=3)
+    # P2 config hot-reload (2026-10-21, default OFF = legacy frozen config):
+    # when true, DispatcherLoop re-reads dispatch.yaml + secrets.env each tick
+    # (~3s) and swaps config in place — new tasks immediately use new MCP
+    # servers / worker selection / secrets / interval. Init-time-frozen fields
+    # (max_workers thread pools, container settings, the HA flag) deliberately
+    # stay frozen; secrets are re-applied with env OVERRIDE (the settings page
+    # edits the file, so the file wins over boot-time process env on reload).
+    config_hot_reload: bool = False
 
     @field_validator("task_env_overrides")
     @classmethod

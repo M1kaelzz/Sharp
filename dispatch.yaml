@@ -57,6 +57,14 @@ runtime:
   # repeated timeouts become visible across rounds. NOTE: this file is read
   # once at dispatcher start; changing it requires restarting the dispatcher.
   task_trace_archive: false
+  # P2 config hot-reload (2026-10-21). false = disabled (legacy: this file is
+  # read once at dispatcher start; every change requires a dispatcher restart).
+  # When true, the dispatcher re-reads dispatch.yaml + secrets.env each tick
+  # (~3s) and swaps its config in place — the SETTINGS PAGE note "重启
+  # Dispatcher 生效" no longer applies: MCP servers / worker selection /
+  # secrets take effect for new tasks within one tick. Init-time-frozen fields
+  # (max_workers, container, the ha_standby flag) still need a real restart.
+  config_hot_reload: false
   # P1-2 deterministic prescan. false = disabled (legacy behavior: the
   # bootstrap LLM re-does HTTP/port/URL recon by hand, burning tokens on
   # deterministic work). When true, an initial-state project runs
