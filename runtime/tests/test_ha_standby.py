@@ -348,6 +348,33 @@ def test_restart_legacy_mode_keeps_pgrep_behavior(client, monkeypatch):
     assert r.json().get("action") == "relaunch_launcher"
 
 
+def test_restart_message_tailored_when_auto_respawn_enabled(client, monkeypatch):
+    """auto-respawn 批（2026-10-21）：SHARP_DISPATCH_AUTO_RESPAWN=1 时（启动器
+    会把 dispatcher 拉回来），停止后的指引必须说"启动器将自动拉起"而不是要求整场
+    重启 ./sharp；action 保持 relaunch_launcher（前端 toast 的 info/error 分级
+    键值绑定，跨批兼容）。默认（无 env）保持旧指引不变。"""
+    import sharp.server.routers.dispatcher as disp_mod
+
+    class FakeRun:
+        stdout = ""
+        returncode = 0
+
+    monkeypatch.setattr(disp_mod.subprocess, "run", lambda *a, **k: FakeRun())
+
+    monkeypatch.setenv("SHARP_DISPATCH_AUTO_RESPAWN", "1")
+    r = _post_restart(client)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("action") == "relaunch_launcher"
+    msg = body.get("message", "")
+    assert "自动拉起" in msg and "请重启 ./sharp" not in msg
+
+    monkeypatch.delenv("SHARP_DISPATCH_AUTO_RESPAWN")
+    r2 = _post_restart(client)
+    assert r2.status_code == 200, r2.text
+    assert "请重启 ./sharp" in r2.json().get("message", "")
+
+
 # ── 5. real-__init__ smoke (2026-10-21) ────────────────────────────────────
 # Every state-machine test above builds the loop via DispatcherLoop.__new__
 # (legitimately: __init__ pulls docker-backed collaborators). That style had a

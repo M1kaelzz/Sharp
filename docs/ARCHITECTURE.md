@@ -559,6 +559,17 @@ env 胜、重载时文件胜，仅 SECRET_KEYS 白名单内键）；任何重载
 被热加载开关（首 tick 只热身指纹不触发重载）。守护
 `tests/test_config_hot_reload.py`（含关态对象身份 pin）。
 
+##### 启动器热重启：副进程自动重拉（P2，`SHARP_DISPATCH_AUTO_RESPAWN=1` 默认关，2026-10-21）
+
+重启职责归还启动器：server 依旧绝不代生 dispatcher（孤儿 + 双开工老问题），但
+launch 的 supervise 现在会把退出的 dispatcher 拉回（`respawn_factory` 参数）——
+「重启 Dispatcher」端点停止进程后启动器自动接盘，批12 那类崩溃也能自愈。防风暴：
+存活 <10s 算 quick fail，退避 1/2/5/10s，连续 5 次 quick fail 放弃并回落旧行为；
+存活 ≥10s 的退出重置计数；退避期间主进程死掉则不复活。跨启动器双开仍由 dispatch
+单实例锁兜底。端点消息按 env 感知（action 保持 relaunch_launcher，前端零改动）。
+守护 `tests/test_launcher_auto_respawn.py`（FakeClock 全确定性驱动 supervise），
+端点消息用例在 `tests/test_ha_standby.py`。
+
 ### 3.4 任务预算与暂停调度（2026-08-29）
 
 #### 任务预算红线

@@ -19,6 +19,39 @@ AIGC:
 
 ## 2026-10-21
 
+### P2｜启动器热重启：dispatcher 自动重拉（SHARP_DISPATCH_AUTO_RESPAWN，默认关闭）——「重启 Dispatcher」按钮名副其实
+
+**来源**：用户问"不能热加载启动 dispatcher 吗"的另一面——dispatcher 一旦死掉
+（批12 NameError 崩溃后），「重启 Dispatcher」按钮只会停止进程并提示重启
+./run.sh，supervise 对副进程退出只记录不重拉，恢复必须整场重启。
+
+**设计**：重启的职责归还启动器（进程的 owner）——server 依旧绝不代生（孤儿 +
+双开的老问题不变），但启动器现在会把退出的副进程拉回来。与 CI 语义一致的双保险：
+跨启动器双开仍由 dispatch 单实例锁兜底。
+
+**开关**：`SHARP_DISPATCH_AUTO_RESPAWN=1` 环境变量（默认关=逐字节旧行为）。
+
+**防重启风暴**（用户当前"全 401 worker → dispatcher 启动即退出"场景的刚需）：
+- 存活 <10s 算 quick fail；按 **1s/2s/5s/10s** 退避（第 5 次连续 quick fail 直接
+  放弃并回落旧行为，不睡 30s 不再拉）——**中途被测试抓出索引差一 bug**（首跳 2s、
+  第 4 跳 30s），已修；
+- 存活 ≥10s 的退出重置计数（健康重启不受惩罚）；
+- 退避睡眠中主进程（window/server）死掉 → 不复活副进程（不在死掉的 supervisor
+  下留孤儿子进程）。
+
+**改动**：`./sharp` supervise 增 `respawn_factory` 参数（run_app/run_web 均接线；
+--no-dispatch 下 supervise 不会调它）；`POST /dispatcher/restart` 成功分支消息
+按 env 感知（"启动器将自动拉起" vs "请重启 ./sharp"），`action` 保持
+`relaunch_launcher` 前端零改动；LAUNCHER_VERSION → 2026-10-21-dispatcher-auto-respawn。
+
+**测试**：`test_launcher_auto_respawn.py` 6 用例——以 SourceFileLoader 加载启动器
++ 可控时钟（FakeClock）+ 脚本化 poll 的假进程全确定性驱动 supervise：默认关=零
+重拉；quick-fail 退避序列 [1,2,5,10] 后第 5 次放弃（防风暴）；存活重置计数；主进
+程死于退避期不复活；接线/版本守护。另 `test_ha_standby.py` 加端点消息 env 感知
+用例（含默认态回归钉）。**965 全绿**（958+6+1）。
+
+---
+
 ### P2｜配置热加载（config_hot_reload，默认关闭）——设置页"保存后需重启"的新解法
 
 **来源**：用户问"不能热加载启动 dispatcher 吗"。排查实锤两个根因：配置

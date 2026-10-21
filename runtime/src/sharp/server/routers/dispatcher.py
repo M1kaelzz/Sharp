@@ -619,10 +619,23 @@ def restart_dispatcher(request: Request):
             "message": f"已发出停止信号（{signaled} 个进程），但仍有 {len(remaining)} 个未退出"
                        "（pid " + ",".join(str(x) for x in remaining) + "）。请重启 ./sharp 完成。",
         }
+    # P2 dispatcher auto-respawn (2026-10-21): when the launcher runs with
+    # SHARP_DISPATCH_AUTO_RESPAWN=1 (same env reaches this server process),
+    # IT will bring the dispatcher back — the message must not ask for a full
+    # ./sharp restart. action stays "relaunch_launcher" either way: the
+    # frontend toast kind keys off it (info vs error) and the semantic "the
+    # launcher brings it back" holds in both cases.
+    auto_respawn = os.environ.get("SHARP_DISPATCH_AUTO_RESPAWN") == "1"
+    message = (
+        "Dispatcher 已停止。启动器将自动拉起新实例（SHARP_DISPATCH_AUTO_RESPAWN=1），"
+        "无需手动重启。"
+        if auto_respawn
+        else "Dispatcher 已停止。请重启 ./sharp 以拉起新的 Dispatcher"
+        "（配置改动需要进程重启才会加载）。"
+    )
     return {
         "signaled": signaled, "spawned": False, "action": "relaunch_launcher",
-        "message": "Dispatcher 已停止。请重启 ./sharp 以拉起新的 Dispatcher"
-                   "（配置改动需要进程重启才会加载）。",
+        "message": message,
     }
 
 

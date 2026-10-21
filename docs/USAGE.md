@@ -203,6 +203,21 @@ Ctrl+C 干净地停掉 server+dispatcher）：
 | `./run.sh doctor` | 预检后运行环境诊断 |
 | `./run.sh dispatch --config dispatch.yaml` | 透传任意子命令（如批12 HA 第二实例） |
 
+### 4.1 Dispatcher 崩溃自动重启（可选，默认关）
+
+Dispatcher 意外退出时（bug、全部 worker 健康检查失败），默认行为是保持桌面/网页
+继续运行、终端提示你重启 `./run.sh` 恢复。如需自动恢复：
+
+```bash
+SHARP_DISPATCH_AUTO_RESPAWN=1 ./run.sh     # 或 ./sharp web
+```
+
+开启后启动器成为副进程的"自动重启器"：Web 界面「设置 → 重启 Dispatcher」变成
+名副其实的热重启（停止 → 启动器 ≤1 秒内拉回，无需整场重启）；dispatcher 崩溃也会
+自动恢复。内置防风暴：<10 秒存活的失败按 1s/2s/5s/10s 退避重拉，连续 5 次快速
+失败自动放弃并回落默认行为（先到终端看报错、修配置/token 再重启，避免重启风暴）。
+HA 备机模式（`runtime.ha_standby`）不需要本开关——active 挂了 standby 本来就会接管。
+
 Windows 用户或无 bash 环境请直接用下面的 `./sharp`（run.sh 只是薄门面，内核都在 `./sharp`）：
 
 | 命令 | 说明 |

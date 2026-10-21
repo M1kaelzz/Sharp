@@ -13,6 +13,7 @@ import time
 import urllib.request
 import webbrowser
 from pathlib import Path
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parent
 PROJECT = ROOT / "runtime"
@@ -21,7 +22,7 @@ DEFAULT_CONFIG = ROOT / "dispatch.yaml"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_TITLE = "Sharp"
-LAUNCHER_VERSION = "2026-10-21-mirror-safe-frozen"
+LAUNCHER_VERSION = "2026-10-21-dispatcher-auto-respawn"
 SECRET_KEYS = ("SHARP_ANTHROPIC_AUTH_TOKEN",)
 
 
@@ -603,11 +604,47 @@ def _terminate_windows(process: subprocess.Popen[bytes], name: str) -> None:
         process.kill()
 
 
-def supervise(primary: subprocess.Popen[bytes], secondary: subprocess.Popen[bytes] | None, *, primary_name: str, secondary_name: str) -> int:
+def supervise(
+    primary: subprocess.Popen[bytes],
+    secondary: subprocess.Popen[bytes] | None,
+    *,
+    primary_name: str,
+    secondary_name: str,
+    respawn_factory: "Callable[[], subprocess.Popen[bytes]] | None" = None,
+) -> int:
+    """Supervise primary (+optional secondary) until the primary exits.
+
+    P2 dispatcher auto-respawn (2026-10-21, SHARP_DISPATCH_AUTO_RESPAWN=1,
+    default OFF = legacy bit-for-bit): when enabled and a respawn_factory is
+    provided, an exited secondary is RESTARTED by the launcher — its natural
+    owner. This is what makes the web UI's 「重启 Dispatcher」 button an
+    actual restart (the endpoint stops the process; the launcher brings it
+    back) and what heals dispatcher crashes (the batch-12 NameError would
+    have self-recovered instead of requiring a full ./run.sh restart).
+
+    Crash-loop safety: an instance that lived < QUICK_FAIL_SECS counts as a
+    quick failure; backoff schedule per consecutive quick failure
+    (1s/2s/5s/10s/30s), and after MAX_QUICK_FAILS consecutive quick failures
+    respawn gives up and behaves exactly like the legacy path (a bad config
+    or an all-401 worker fleet must not turn into a restart storm). A
+    restart that survives QUICK_FAIL_SECS resets the counter.
+    """
+    # (P2 auto-respawn, 2026-10-21): launcher-owned dispatcher restarts.
+    QUICK_FAIL_SECS = 10.0
+    MAX_QUICK_FAILS = 5
+    BACKOFF_SCHEDULE = (1.0, 2.0, 5.0, 10.0, 30.0)
+
+    secondary_holder: list[subprocess.Popen[bytes] | None] = [secondary]
+    spawned_at: list[float] = [time.monotonic()]
+    quick_fails: list[int] = [0]
     secondary_exit: int | None = None
+    auto_respawn = (
+        respawn_factory is not None
+        and os.environ.get("SHARP_DISPATCH_AUTO_RESPAWN") == "1"
+    )
 
     def stop_all(signum: int | None = None, frame: object | None = None) -> None:
-        terminate_process(secondary, secondary_name)
+        terminate_process(secondary_holder[0], secondary_name)
         terminate_process(primary, primary_name)
         raise SystemExit(130 if signum else 0)
 
@@ -630,19 +667,60 @@ def supervise(primary: subprocess.Popen[bytes], secondary: subprocess.Popen[byte
     # torn down so the port is always released.
     import atexit
 
-    atexit.register(lambda: (terminate_process(secondary, secondary_name), terminate_process(primary, primary_name)))
+    atexit.register(
+        lambda: (
+            terminate_process(secondary_holder[0], secondary_name),
+            terminate_process(primary, primary_name),
+        )
+    )
 
     while True:
         primary_status = primary.poll()
         if primary_status is not None:
-            terminate_process(secondary, secondary_name)
+            terminate_process(secondary_holder[0], secondary_name)
             return primary_status if secondary_exit is None else secondary_exit
-        if secondary is not None and secondary_exit is None:
-            status = secondary.poll()
+
+        sec = secondary_holder[0]
+        if sec is not None and secondary_exit is None:
+            status = sec.poll()
             if status is not None:
-                secondary_exit = status
-                print(f"[sharp] {secondary_name} exited with status {status}; keeping {primary_name} running.", file=sys.stderr)
-                print(f"[sharp] Close {primary_name} or press Ctrl+C here to stop.", file=sys.stderr)
+                if not auto_respawn:
+                    # Legacy path (default): record and keep the primary only.
+                    secondary_exit = status
+                    print(f"[sharp] {secondary_name} exited with status {status}; keeping {primary_name} running.", file=sys.stderr)
+                    print(f"[sharp] Close {primary_name} or press Ctrl+C here to stop.", file=sys.stderr)
+                else:
+                    lived = time.monotonic() - spawned_at[0]
+                    if lived < QUICK_FAIL_SECS:
+                        quick_fails[0] += 1
+                    else:
+                        quick_fails[0] = 0
+                    if quick_fails[0] >= MAX_QUICK_FAILS:
+                        print(
+                            f"[sharp] {secondary_name} exited with status {status} "
+                            f"({quick_fails[0]} consecutive quick failures; lived {lived:.1f}s). "
+                            f"Auto-respawn gave up — fix the failure (config / tokens) and rerun ./sharp.",
+                            file=sys.stderr,
+                        )
+                        secondary_exit = status
+                        print(f"[sharp] keeping {primary_name} running. Close it or press Ctrl+C here to stop.", file=sys.stderr)
+                    else:
+                        # quick_fails is already incremented (>=1); the 1st
+                        # quick failure backs off 1s, the 4th 10s, the 5th
+                        # never gets here (give-up above).
+                        delay = BACKOFF_SCHEDULE[min(quick_fails[0] - 1, len(BACKOFF_SCHEDULE) - 1)]
+                        print(
+                            f"[sharp] {secondary_name} exited with status {status} (lived {lived:.1f}s); "
+                            f"respawning in {delay:.0f}s (quick-fail {quick_fails[0]}/{MAX_QUICK_FAILS})",
+                            file=sys.stderr,
+                        )
+                        time.sleep(delay)
+                        # The primary may have died while we were backing off —
+                        # do not resurrect the secondary under a dead supervisor.
+                        if primary.poll() is None:
+                            secondary_holder[0] = respawn_factory()
+                            spawned_at[0] = time.monotonic()
+                            print(f"[sharp] {secondary_name} respawned.", file=sys.stderr)
         time.sleep(0.5)
 
 
@@ -672,7 +750,13 @@ def run_app(extra: list[str]) -> int:
     dispatcher = start_managed(
         uv_run_cli("dispatch", "--config", str(cfg), "--server", server_url)
     )
-    return supervise(window, dispatcher, primary_name="desktop app", secondary_name="dispatcher")
+    return supervise(
+        window, dispatcher,
+        primary_name="desktop app", secondary_name="dispatcher",
+        respawn_factory=lambda: start_managed(
+            uv_run_cli("dispatch", "--config", str(cfg), "--server", server_url)
+        ),
+    )
 
 
 def run_web(extra: list[str]) -> int:
@@ -712,7 +796,15 @@ def run_web(extra: list[str]) -> int:
         dispatcher = start_managed(
             uv_run_cli("dispatch", "--config", str(cfg), "--server", server_url)
         )
-    return supervise(server, dispatcher, primary_name="web server", secondary_name="dispatcher")
+    # dispatcher is None under --no-dispatch; supervise never calls the factory
+    # when there is no secondary, so an unconditional lambda is fine.
+    return supervise(
+        server, dispatcher,
+        primary_name="web server", secondary_name="dispatcher",
+        respawn_factory=lambda: start_managed(
+            uv_run_cli("dispatch", "--config", str(cfg), "--server", server_url)
+        ),
+    )
 
 
 if __name__ == "__main__":
