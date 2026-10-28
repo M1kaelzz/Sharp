@@ -11,7 +11,8 @@ class RunningTask:
     task_type: str
     worker_name: str
     cancellation: TaskCancellation
-    start_time: float  # monotonic timestamp when task started
+    start_time: float  # monotonic timestamp when task started (timeout math only)
+    started_at_wall: float  # wall-clock epoch seconds when task started (trace archive display)
     intent_id: str | None = None
     fact_count: int | None = None
     hint_count: int | None = None

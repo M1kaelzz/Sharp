@@ -115,21 +115,30 @@ runtime:
 
 tasks:
   bootstrap:
-    timeout: 400           # 初始探索超时（秒）
+    timeout: 600           # 初始探索超时（秒）：v0.4.0 起 400→600（thinking 模型一轮常需 5-8 分钟）
     conclude_timeout: 180  # 兜底总结超时（秒）：bootstrap 与 explore 均已升到 180（90s 并发下实测被杀）
     conclude_retry: false  # P0-3：conclude 失败后同一 session 重试一次（默认关=旧行为）
   reason:
-    timeout: 300           # 推理超时（秒）
+    timeout: 600           # 推理超时（秒）：v0.4.0 起 300→600（思考型模型实际需要）
     max_intents: 4         # 每轮最多新增行动数
   explore:
-    timeout: 300           # 探索超时（秒）
+    timeout: 600           # 探索超时（秒）：v0.4.0 起 300→600，300s 级会频繁空转重派
     conclude_timeout: 180  # 兜底总结超时（秒）：结论是唯一把一轮工作带回图里的通道，
                            # 太紧会在并发下被 timeout 杀掉、整轮白干（实测 90s 会命中）
     conclude_retry: false  # P0-3：同 bootstrap.conclude_retry（默认关=旧行为）
 
-# P1-3 真 token 计量（默认关）：common_env 里设 SHARP_TOKEN_METERING: "1" 后，
-# 每次 claude 调用会注入 --output-format json，用量 best-effort 落 task_usage 表
-# （input/output/cache token + total_cost_usd）。需 claude CLI 支持该 flag。
+# 直连 API 执行模式（v0.4.0，SHARP_DIRECT_API，默认关）：agent CLI（claude/codex）
+# 的产品级内容过滤会静默吞掉攻击意图 prompt——空输出、零报错，渗透任务构造
+# payload 时轮轮被拦（explore 空转的根因）。开启后 worker 以内嵌 node agent-loop
+# 直连模型 API（claudecode=anthropic tool_use、codex=openai function calling）。
+# 直连调优参数：SHARP_AGENT_MAX_ROUNDS（默认 20）、SHARP_AGENT_BASH_TIMEOUT
+# （默认 60s）、SHARP_AGENT_MAX_TOKENS（默认 16384——thinking 模型必须给足，
+# 4096 会被思考烧光导致空正文、reason 每 70s 空转重烧）。
+#   SHARP_DIRECT_API: "1"
+# P1-3 真 token 计量（v0.4.0 起默认开启）：未设置即开启，显式 "0" 关闭。开启后
+# 每次 agent 调用注入 --output-format json（CLI 模式）或 JSON envelope（直连模式），
+# 用量 best-effort 落 task_usage 表（input/output/cache token + total_cost_usd）。
+# 下行冗余但显式：
 #   SHARP_TOKEN_METERING: "1"
 
 workers:
@@ -167,10 +176,10 @@ workers:
 | `ha_takeover_after` | `15` | P2-12 | HA 租约接管等待秒数（≥3s；配合 `ha_standby`） |
 
 服务器侧（env，见 [§8.4](#84-高危行动与人工审批approval-gate)）：`SHARP_ALERT_*` 高危 IM 通知
-（默认关）；`common_env` 里 `SHARP_TOKEN_METERING=1` 开 token 计量。
+（默认关）；`common_env` 里 `SHARP_TOKEN_METERING` 计量 v0.4.0 起默认开启（显式 `"0"` 关闭）。
 
-**推荐启用顺序**：先开**纯观测组**（`SHARP_TOKEN_METERING` → `fact_time_ordering` →
-`evidence_auto_bind`，不改变调度行为，只增数据），在 task_usage 数据基座上验证成本/证据质量收益，
+**推荐启用顺序**：token 计量 v0.4.0 起默认已开（task_usage 基座就位）；先开**纯观测组**
+（`fact_time_ordering` → `evidence_auto_bind`，不改变调度行为，只增数据），在 task_usage 数据基座上验证成本/证据质量收益，
 再开**调度行为组**（`conclude_retry` → `bootstrap_stall_threshold: 2` → `intent_dependency_gate`
 → `prescan_enabled`），最后按需开 `graph_distance_context` / `task_env_overrides` / `ha_standby`。
 
@@ -523,8 +532,8 @@ operator webhook，让高危从"拉取"变"推送"。同样是脱敏端 env 作�
 > **⚠️ Worker 容器凭据安全（审计 A1，务必读）**：API 凭经环境变量注入**每个项目容器**
 > ——若目标对容器发起反制（如 RCE），你的 API token 可能被窃取并被盗刷。建议：
 > ① **给 worker 用的 key 设置用量/速率限额**（在 API 提供方侧，不进代码）；
-> ② 开启 `SHARP_TOKEN_METERING` 计量 + `SHARP_ALERT_COST_PER_TASK` 告警，成本异常第一
-> 时间告警止损；③ 认真目标可单独使用低额度 key。凭据不出容器环境的彻底方案（宿主侧
+> ② token 计量 v0.4.0 起默认开启（task_usage 落库），加开 `SHARP_ALERT_COST_PER_TASK` 告警，
+> 成本异常第一时间告警止损；③ 认真目标可单独使用低额度 key。凭据不出容器环境的彻底方案（宿主侧
 > 代理网关）与"直连、零代理"设计取舍，见架构文档。
 
 #### 审批流程
@@ -648,11 +657,11 @@ AI worker 在 explore 阶段确认漏洞后（通过布尔 oracle 协议验证�
 
 #### 8.6.1 模型用量成本带（仪表盘）
 
-开启 token 计量（`SHARP_TOKEN_METERING: "1"`，见 §3.3）后，仪表盘会出现「模型用量
+token 计量 v0.4.0 起默认开启（显式 `SHARP_TOKEN_METERING: "0"` 可关，见 §3.3），仪表盘会出现「模型用量
 成本」卡片：**累计/今日金额**（较昨日对比）、**任务类型环形图**（reason/explore/
 bootstrap/prescan 分色——开启批11 `task_env_overrides` 模型分工后，此处一眼可见
 "explore 高频但便宜"的省钱效果）、**7 天趋势线**、**烧钱 TOP3 项目**（点击跳转）。
-未开计量（`task_usage` 无数据）时整卡隐藏，不占版面。项目级数据见
+计量显式关闭（`task_usage` 无数据）时整卡隐藏，不占版面。项目级数据见
 `GET /projects/{id}/usage`（API）。
 
 ### 8.7 跨目标知识复用（2026-08-29；**2026-09-15 重做**）

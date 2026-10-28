@@ -309,6 +309,37 @@ function applyProjectDetailModule(obj) {
         this.subGoals = await this.api('GET', `/projects/${pid}/sub-goals`) || [];
       } catch (_) { this.subGoals = []; }
     },
+    // 调度轨迹（P1-4 process exchange 展示）：最近调度轮次，失败/超时跨轮次可见
+    async loadTraces() {
+      const pid = this.selectedProjectId;
+      if (!pid) { this.traces = []; this.tracesLoading = false; return; }
+      this.tracesLoading = true;
+      try {
+        const traces = await this.api('GET', `/projects/${pid}/traces?limit=8`);
+        this.traces = Array.isArray(traces) ? traces : [];
+      } catch (_) { this.traces = []; }
+      finally { this.tracesLoading = false; }
+    },
+    traceOutcomeLabel(outcome) {
+      return ({ success: '成功', failed: '失败', timeout: '超时', error: '出错', cancelled: '取消' })[outcome] || outcome || '—';
+    },
+    traceOutcomeClass(outcome) {
+      if (outcome === 'success') return 'bg-teal-50 text-teal-700';
+      if (outcome === 'failed' || outcome === 'error') return 'bg-rose-50 text-rose-600';
+      if (outcome === 'timeout') return 'bg-amber-50 text-amber-600';
+      if (outcome === 'cancelled') return 'bg-slate-100 text-slate-500';
+      return 'bg-slate-100 text-slate-600';
+    },
+    traceDuration(ms) {
+      if (ms == null) return '—';
+      if (ms >= 60000) return `${(ms / 60000).toFixed(1)} min`;
+      if (ms >= 1000) return `${(ms / 1000).toFixed(1)} s`;
+      return `${ms} ms`;
+    },
+    traceTime(startedAt) {
+      if (!startedAt) return '—';
+      return this.formatDate(startedAt * 1000);
+    },
     subGoalProgress() {
       const total = (this.subGoals || []).length;
       const done = (this.subGoals || []).filter(g => g.status === 'done').length;
@@ -384,6 +415,7 @@ function applyProjectDetailModule(obj) {
       try { await this.loadEmergencyStatus(); } catch (_) { /* best-effort */ }
       try { await this.loadSubGoals(); } catch (_) { /* best-effort */ }
       try { await this.loadHypotheses(); } catch (_) { /* best-effort */ }
+      try { await this.loadTraces(); } catch (_) { /* best-effort */ }
       if (location.hash !== `#/projects/${id}`) location.hash = `/projects/${id}`;
       this.$nextTick(() => {
         const clampedWidth = this.clampPanelWidth(this.sidePanelWidth);
@@ -421,6 +453,8 @@ function applyProjectDetailModule(obj) {
       this.selectedFacts = [];
       this.selectedTimelineEntryId = null;
       this.vulns = [];
+      this.traces = [];
+      this.tracesLoading = false;
       this.teardownAutoFit();
       this._teardownNavigator();
       if (this.cy) { this.cy.destroy(); this.cy = null; }

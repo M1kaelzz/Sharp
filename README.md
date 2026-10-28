@@ -72,7 +72,7 @@ Sharp 面向三类授权测试对象，共享同一套证据—行动图、审�
 
 - **Server**（`runtime/src/sharp/server/`）：FastAPI 路由 + SQLite(WAL)。维护证据 / 行动 / 线索图，是协议真相源。前端和 Dispatcher 都通过它读写。
 - **Dispatcher**（`runtime/src/sharp/dispatcher/`）：独立进程，单线程调度循环。调度任务、管理生命周期、代 agent 调用 Server API 写图。**是 agent 派生 fact 的唯一写入方**（控制面）。
-- **Worker 容器**：每个项目一个长驻容器，Dispatcher 通过 `docker exec` 把 agent 命令注入执行。Agent 之间不直接通信，只读写同一张共享图。
+- **Worker 容器**：每个项目一个长驻容器，Dispatcher 通过 `docker exec` 注入执行。Agent 执行默认走 **API 直连**（内嵌 node agent-loop，绕开 agent CLI 的产品级内容过滤，v0.4.0）；Agent 之间不直接通信，只读写同一张共享图。
 - **可选 HA 热备**：`runtime.ha_standby` 开启后允许第二个 Dispatcher 进程待命——活跃性由 Server 侧单行租约表裁决（进程视角 → 共享真相视角），活跃实例崩溃后 standby ≤15s 自动接管；任务认领本就是服务端原子 CAS，接管不会重复执行、无脑裂。
 
 **核心数据流**（证据 → 行动闭环）：
@@ -113,7 +113,7 @@ flowchart LR
 | 层 | 机制 | 开关（`dispatch.yaml`） |
 |---|---|---|
 | **止损与鲁棒** | bootstrap 连败自动暂停并写诊断线索（不再无限重派烧钱）；conclude 失败同会话重试一次（砍掉整轮 5-7 分钟白干）；行动依赖链闸门（前置证据未落地不派发，附死锁看门狗） | `bootstrap_stall_threshold` / `tasks.*.conclude_retry` / `intent_dependency_gate` |
-| **成本与观测** | 真 token 计量（input/output/cache/成本落 `task_usage` 表）；任务轨迹归档并注入 reason（跨轮看到失败方向）；确定性预扫描（bootstrap 前 httpx/nmap/katana 种子 fact，侦察不烧 LLM）；发现缺证据自动回填观察片段 | `SHARP_TOKEN_METERING` / `task_trace_archive` / `prescan_enabled` / `evidence_auto_bind` |
+| **成本与观测** | 真 token 计量（input/output/cache/成本落 `task_usage` 表，**默认开启**）；任务轨迹归档并注入 reason（跨轮看到失败方向）；确定性预扫描（bootstrap 前 httpx/nmap/katana 种子 fact，侦察不烧 LLM）；发现缺证据自动回填观察片段 | `SHARP_TOKEN_METERING`（默认开） / `task_trace_archive` / `prescan_enabled` / `evidence_auto_bind` |
 | **上下文效率** | 图摘要按「离当前焦点的图距离」截断（当前证据链全文、旁支压缩）；fact 第一手时间戳 + 按真实时间取最近 N 条 | `graph_distance_context` / `fact_time_ordering` |
 | **模型分工** | 任务类型级 env 覆盖：reason（低频规划）用强模型、explore（高频执行）用便宜模型，无需复制 worker 条目与凭据 | `task_env_overrides` |
 | **高可用** | Active-Standby 热备：server 侧租约裁决活跃实例，崩溃 ≤15s 自动接管；传输错误 fail-open（server 不可达时不误切、无脑裂） | `ha_standby` + `ha_takeover_after` |
@@ -147,7 +147,7 @@ flowchart LR
 | 组件 | 技术 |
 |---|---|
 | 基础镜像 | `python:3.12-slim-bookworm`（Debian） |
-| Agent CLI | claude-code（npm，npmmirror 源） |
+| Agent 执行 | API 直连（v0.4.0 默认：内嵌 node agent-loop，anthropic tool_use / OpenAI function calling）；agent CLI（claude-code，npm npmmirror 源）作回退 |
 | 扫描器 | nmap / ncat / nuclei / httpx / katana / naabu / ffuf / dalfox / jwt_tool / gitleaks |
 | 移动端分析 | adb / apktool / jadx / dex2jar / panda-dex-dumper |
 | 网络工具 | curl / wget / git / jq / ripgrep / node 20 / JRE |
@@ -266,3 +266,5 @@ python3 ../scripts/check_methods.py              # 前端 Alpine 方法完整性
 - 本开源包按 **AGPL-3.0** 发布，详见 `LICENSE`。
 - 另有**商业授权**（Ed25519 离线授权）用于桌面发行版，见 `docs/OPENSOURCE_RELEASE.md`。
 - 第三方组件许可见 `THIRD_PARTY_NOTICES.md`。
+
+> AI生成

@@ -86,7 +86,7 @@ def _make_loop(client: RecordingClient | None = None, max_project_workers: int =
 
 
 def _running_task(pid: str, task_type: str = "explore") -> RunningTask:
-    return RunningTask(pid, task_type, "w1", TaskCancellation(), time.monotonic())
+    return RunningTask(pid, task_type, "w1", TaskCancellation(), time.monotonic(), time.time())
 
 
 def _detail(project: ProjectMeta | None = None, intents=None, facts=None) -> ProjectDetail:

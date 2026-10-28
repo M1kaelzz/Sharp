@@ -62,6 +62,11 @@ function sharpApp() {
     projects: [],
     projectSearch: '',
     graphSearch: '',
+    // graph 视图过滤器（仅高危/隐藏已结论/血缘链）。此前漏声明 → 首帧 :class 求值
+    // ReferenceError（graphFilterVuln 等 is not defined），由状态守护的 :class 盲区放过
+    graphFilterVuln: false,
+    graphFilterConcluded: false,
+    graphFilterBloodline: false,
     vulnFilter: { severity: 'all', status: 'all', kind: 'all' },
     scoreboard: null,          // 项目记分板（批次 B：旗帜数/得分）
     subGoals: [],              // 阶段目标（批次 C）
@@ -71,6 +76,9 @@ function sharpApp() {
     subGoalDraft: '',          // 新阶段目标输入
     coverage: null,            // 覆盖报告（P1-A）：打到了什么 / 已验证不通 / 盲区
     coverageLoading: false,
+    // 调度轨迹（P1-4 process exchange）：项目级最近调度轮次，openProject 并行拉取
+    traces: [],
+    tracesLoading: false,
     assetSpace: null,          // 目标空间详情（P2-A）：一个资产键下跨项目的整体状态
     assetSpaceLoading: false,
     assetSpaceOpen: false,

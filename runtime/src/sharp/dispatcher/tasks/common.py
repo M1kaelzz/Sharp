@@ -675,8 +675,9 @@ def record_task_usage_best_effort(
 ) -> None:
     """P1-3 real token metering: best-effort one-shot usage report.
 
-    Enabled per worker via env `SHARP_TOKEN_METERING=1` (default off — legacy
-    behavior, zero overhead). Any failure is logged and swallowed: metering
+    Default ON since 2026-10-28: metering records unless the worker env
+    explicitly sets `SHARP_TOKEN_METERING=0` (opt-out keeps legacy behavior,
+    zero overhead). Any failure is logged and swallowed: metering
     must NEVER affect the task outcome. The outcome is derived from the
     process result itself, so the caller can record right after the process
     returns, before the task branches on success/failure.
@@ -688,7 +689,7 @@ def record_task_usage_best_effort(
         worker_env = dict(getattr(worker, "env", None) or {})
     except Exception:
         worker_env = {}
-    if str(worker_env.get("SHARP_TOKEN_METERING", "")).strip() != "1":
+    if str(worker_env.get("SHARP_TOKEN_METERING", "1")).strip().lower() == "0":
         return
     try:
         usage = driver.extract_usage(result.stdout)

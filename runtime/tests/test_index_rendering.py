@@ -189,13 +189,13 @@ def test_sidebar_merges_stages_and_hypotheses_into_plan(client):
     """阶段与假设合并为一个「规划」标签。
 
     原因不是"少一个更好看"：侧栏默认 320px、标签行每个 `flex-1` 只剩约 29px 内容宽，
-    6 个标签时任何带计数的标签都会折成两行（`线索 0` 就是这么暴露的）。
-    合并后 5 个标签，且两者语义本就同源 —— 都是"AI 规划器产出的推进结构"。
+    带计数的标签（`线索 0`、`规划 N`）会折成两行。合并后 P5 又加一个无计数的
+    「轨迹」，当前为 6 个 2 字标签（详情/线索/日志/规划/实时/轨迹）。
     """
     html = client.get("/").text
     tab_bar = html[html.index("sideTab = 'detail'"): html.index("<!-- Detail -->")]
     values = re.findall(r"sideTab = '([a-z]+)'", tab_bar)
-    assert values == ["detail", "hints", "log", "plan", "live"], values
+    assert values == ["detail", "hints", "log", "plan", "live", "traces"], values
     assert "stages" not in values and "hypotheses" not in values
 
 

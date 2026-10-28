@@ -66,9 +66,10 @@ approval gate, and asset ledger (see `docs/USAGE.md` for full workflows):
 - **Dispatcher** (`runtime/src/sharp/dispatcher/`): a separate single-threaded scheduling loop. It
   schedules tasks, manages lifecycles, and writes to the graph on behalf of the agent. **It is the
   only writer of agent-derived facts** (control plane).
-- **Worker containers**: one long-lived container per project; the Dispatcher injects agent commands
-  via `docker exec`. Agents never talk to each other directly — they only read/write the same
-  shared graph.
+- **Worker containers**: one long-lived container per project; the Dispatcher injects execution
+  via `docker exec`. Agents run in **direct-API mode** by default (an embedded node agent-loop that
+  bypasses the agent CLI's product-level content filtering, v0.4.0). Agents never talk to each other
+  directly — they only read/write the same shared graph.
 - **Optional HA (hot standby)**: with `runtime.ha_standby` a second Dispatcher process may wait
   on standby — liveness is arbitrated by a single lease row on the Server; if the active instance
   dies the standby takes over within ~15s. Task claiming is already a server-side atomic CAS, so
@@ -108,17 +109,18 @@ flowchart LR
 ## Reliability · Cost · HA (mechanism upgrades)
 
 The three engineering pains of long-running batch work — **money-burning loops, invisible
-costs, single-point processes** — each have a mechanism layer. All are opt-in switches,
-**default off** (off = bit-for-bit legacy behavior); see `docs/USAGE.md` §3.3 for the full
-switch table and a recommended enable order.
+costs, single-point processes** — each have a mechanism layer. All are switches (token metering
+is **default ON** since v0.4.0; the rest default off, off = bit-for-bit legacy behavior); see
+`docs/USAGE.md` §3.3 for the full switch table and a recommended enable order.
 
 - **Loss limits & robustness**: bootstrap stall auto-pause with a diagnostic hint (no endless
   re-dispatch); same-session conclude retry (a failed summary no longer discards a whole round);
   dependency gate with a deadlock watchdog (`bootstrap_stall_threshold` / `conclude_retry` /
   `intent_dependency_gate`).
-- **Cost & observability**: real token metering into `task_usage`; per-round task traces injected
+- **Cost & observability**: real token metering into `task_usage` (**default ON** since v0.4.0);
+  per-round task traces injected
   into reason; deterministic pre-scan (httpx/nmap/katana before bootstrap — recon does not burn
-  LLM tokens); evidence auto-binding from observed output (`SHARP_TOKEN_METERING` /
+  LLM tokens); evidence auto-binding from observed output (`SHARP_TOKEN_METERING` (default on) /
   `task_trace_archive` / `prescan_enabled` / `evidence_auto_bind`).
 - **Context efficiency**: graph summary truncated by distance-to-focus (the current evidence
   chain stays full length); first-hand fact timestamps (`graph_distance_context` /
@@ -159,7 +161,8 @@ requests, cryptography. Test tools (pytest/httpx) are intentionally **not locked
 | Component | Tech |
 |---|---|
 | Base image | `python:3.12-slim-bookworm` (Debian) |
-| Agent CLI | claude-code (npm, npmmirror registry) |
+| Agent execution | direct API (v0.4.0 default: embedded node agent-loop, anthropic tool_use /
+  OpenAI function calling); agent CLI (claude-code, npm npmmirror registry) as fallback |
 | Scanners | nmap / ncat / nuclei / httpx / katana / naabu / ffuf / dalfox / jwt_tool / gitleaks |
 | Mobile analysis | adb / apktool / jadx / dex2jar / panda-dex-dumper |
 | Networking | curl / wget / git / jq / ripgrep / node 20 / JRE |
@@ -286,3 +289,5 @@ python3 ../scripts/check_docs.py                 # docs ↔ code consistency
 AGPL-3.0 (`LICENSE`). Third-party components and their licenses: `THIRD_PARTY_NOTICES.md`.
 A commercial license (Ed25519 offline signing) covers the desktop distribution — see
 `docs/OPENSOURCE_RELEASE.md`.
+
+> AI生成

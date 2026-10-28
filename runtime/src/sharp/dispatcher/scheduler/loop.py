@@ -612,6 +612,7 @@ class DispatcherLoop:
             PRESCAN_CREATOR,
             TaskCancellation(),
             start_time=time.monotonic(),
+            started_at_wall=time.time(),
             intent_id=None,
         )
         self.runtime_project_ids.add(project_id)
@@ -821,6 +822,7 @@ class DispatcherLoop:
             worker.name,
             cancellation,
             start_time=time.monotonic(),
+            started_at_wall=time.time(),
             intent_id=None,
             fact_count=len(project.facts),
             hint_count=len(project.hints),
@@ -884,7 +886,7 @@ class DispatcherLoop:
             LOG.exception("failed to submit bootstrap task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             self._best_effort_release(project.project.id, intent.id, worker.name)
             return False
-        self.futures[future] = RunningTask(project.project.id, "bootstrap", worker.name, cancellation, start_time=time.monotonic(), intent_id=intent.id)
+        self.futures[future] = RunningTask(project.project.id, "bootstrap", worker.name, cancellation, start_time=time.monotonic(), started_at_wall=time.time(), intent_id=intent.id)
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         self.client.increment_task_count(project.project.id)
@@ -947,7 +949,7 @@ class DispatcherLoop:
             LOG.exception("failed to submit explore task project=%s intent=%s worker=%s", project.project.id, intent.id, worker.name)
             self._best_effort_release(project.project.id, intent.id, worker.name)
             return False
-        self.futures[future] = RunningTask(project.project.id, task_type, worker.name, cancellation, start_time=time.monotonic(), intent_id=intent.id)
+        self.futures[future] = RunningTask(project.project.id, task_type, worker.name, cancellation, start_time=time.monotonic(), started_at_wall=time.time(), intent_id=intent.id)
         self.runtime_project_ids.add(project.project.id)
         self._clear_project_log_state(project.project.id)
         self.client.increment_task_count(project.project.id)
@@ -1138,7 +1140,7 @@ class DispatcherLoop:
                 "worker_name": task.worker_name,
                 "task_type": task.task_type,
                 "outcome": outcome,
-                "started_at": task.start_time,
+                "started_at": task.started_at_wall,
                 "duration_ms": int((time.monotonic() - task.start_time) * 1000),
             }
             self.client.record_task_traces([record])

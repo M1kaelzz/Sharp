@@ -116,6 +116,7 @@ def _done_future(outcome: str = "success") -> tuple[Future, RunningTask]:
         worker_name="w1",
         cancellation=types.SimpleNamespace(cancel=lambda reason: None),
         start_time=1000.0,
+        started_at_wall=1_800_000_000.0,
         intent_id="i1",
     )
     return fut, task
@@ -147,7 +148,28 @@ def test_reap_with_archive_enabled_records_one_row():
     assert r["worker_name"] == "w1"
     assert r["task_type"] == "explore"
     assert r["outcome"] == "success"
-    assert r["started_at"] == task.start_time
+    assert r["started_at"] == task.started_at_wall
+
+
+def test_trace_started_at_uses_wall_clock_not_monotonic():
+    """Regression guard: the 1970 bug.
+
+    start_time is a monotonic counter (small, machine-uptime-relative); if it is
+    ever reported as started_at again, the UI renders "1970-01-01" because it
+    parses the column as epoch seconds. The archive must carry the wall-clock
+    field instead.
+    """
+    tc = TraceRecordingClient()
+    loop = _make_loop(archive=True, trace_client=tc)
+    fut, task = _done_future()
+    task.start_time = 42.0  # small monotonic value, typical right after boot
+    task.started_at_wall = 1_800_000_000.0
+    loop.futures[fut] = task
+    loop._reap_futures()
+    r = tc.trace_records[0]
+    assert r["started_at"] == 1_800_000_000.0
+    assert r["started_at"] != task.start_time  # 1970 bug must not come back
+    assert r["started_at"] > 1_000_000_000  # sanity: plausible epoch seconds
 
 
 # ── dispatcher: failed archive write is swallowed ─────────────────────────

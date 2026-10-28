@@ -17,6 +17,101 @@ AIGC:
 
 ---
 
+## 2026-10-28
+
+### 直连 API 执行层｜claudecode/codex 双适配器绕开 CLI 内容过滤 + 根治 reason 空转（SHARP_DIRECT_API，默认关）
+
+**背景**：实测证实 claude CLI（codex CLI 同理）产品级内容过滤会**静默吞掉攻击意图 prompt**——CLI 退出码 0、输出为空，模型根本没收到 prompt；同一模型走 API 直连则完全配合构造攻击 payload。这是 explore 攻击任务轮轮空转、不出 fact 的根因，也是 CLI 作 worker 架构在实战场景下的硬伤。
+
+**改动**：
+- `claudecode.py`：新增 `SHARP_DIRECT_API` 开关（默认关=CLI 行为逐字节不变）。开启时以
+  内嵌 node agent-loop（anthropic tool_use 协议）替代 CLI：tool_use 循环（bash 工具容器内
+  执行/结果回填）、会话持久化 `/tmp/sharp-sessions/<sid>.jsonl`、**轮数用尽发一次无 tools 的
+  强制总结请求**保证收敛有输出。
+- `codex.py`：同机制 OpenAI chat-completions（function calling）版；SeedSession——direct 模式
+  `build_execute` 自生成 uuid 存入 `DriverResult.session`，`extract_session` 短路透传（旧 CLI
+  模式不变）；补 `extract_usage`，codex 首次支持计量。
+- 参数化：`SHARP_AGENT_MAX_ROUNDS`（20）/ `SHARP_AGENT_BASH_TIMEOUT`（60s）/
+  `SHARP_AGENT_MAX_TOKENS`（16384，**修复 v4-pro thinking 模型烧光 max_tokens=4096 → 正文为空
+  → reason parse failed → 每 70s 空转重烧**）。
+- `dispatch.yaml`：双 worker `SHARP_DIRECT_API="1"`；bootstrap/reason/explore 超时 300→600s；
+  `SHARP_TOKEN_METERING="1"` + `task_trace_archive: true` 开启。
+- 修复真坑：node `-e` 脚本 argv 缺 `--` 分隔符（`node: bad option: --session` → bootstrap
+  全失败），守卫测试钉死。
+
+**验证**：全量 988 passed（`test_direct_api.py` / `test_direct_api_codex.py` 含脚本机制突变守卫）；
+实测——18257 Laravel 链（Ignition 任意文件读取 + php://filter 绕 WAF）自主拿到
+`flag{9ec9da…}`、3 漏洞入库；10009 CBC 题（CBC 字节翻转伪造 admin 会话）拿到 `flag{08d289…}`，
+max_tokens 修复后**从空转到完成 4 分钟**；task_traces 13 条 / task_usage 14 条落库（成本带+轨迹
+tab 有数据）。
+
+---
+
+### 修复｜轨迹时间戳显示"1970"：dispatcher 上报误用 monotonic 当 epoch
+
+**根因**：`RunningTask.start_time` 是 `time.monotonic()`（相对秒，超时运算专用），
+`_record_task_trace` 上报时误把它当 epoch 塞进 `started_at` → 前端 `new Date(几百)` 渲染成
+1970 年。
+
+**改动**：`RunningTask` 新增必填 `started_at_wall`（`time.time()`），4 个构造点
+（prescan/reason/bootstrap/explore）同步传入，上报 `started_at` 改用它；`start_time`（monotonic）
+保留只做超时/duration 运算。
+
+**验证**：全量 989 passed；突变验证——上报点改回 `task.start_time` 时 2 个测试转红（新守卫
+`test_trace_started_at_uses_wall_clock_not_monotonic` 钉死），还原后全绿。**注**：修复前已落库
+13 条 trace 的 `started_at` 为单调钟小值且不可回算（monotonic 起点未知），历史行仍显示 1970，
+新记录起正常。
+
+---
+
+### 默认开启｜token 流量统计（SHARP_TOKEN_METERING）从 opt-in 翻转为 opt-out
+
+**背景**：P1-3 计量原为"默认关、显式 `=1` 开"——用户要求流量统计默认开启（新部署/配置
+丢失时不再依赖手动开）。
+
+**改动**（语义：未设置=开，显式 `"0"`=关，四处 gate 同步翻转）：
+- `common.record_task_usage_best_effort` 收集入口（默认 `"1"`，`== "0"` 才跳过）
+- `claudecode._metering_enabled`（CLI 模式 `--output-format json` 注入）
+- claudecode / codex 直连 node agent-loop 内嵌脚本（`process.env.SHARP_TOKEN_METERING !== '0'`）
+- `dispatch.yaml` 保留显式 `"1"` 作为文档（冗余但明确）；注释更新
+
+**验证**：计量相关 70 passed；突变验证——两处 python gate 改回 opt-in 旧语义时 3 测试
+转红（新守卫 `test_metering_default_on_injects_json_into_execute/conclude`、
+`test_record_usage_best_effort_default_on_records` 钉死默认值），还原全绿；direct-off 两个
+回归测试显式 `"0"` 隔离维度。**运行时行为零变化**：当前部署 dispatch.yaml 本就显式 `"1"`，
+本次只翻转未配置场景的默认值；新代码随下次 `./sharp` 重启自然生效。
+
+---
+
+## 2026-10-26
+
+### P5｜项目侧栏新增「调度轨迹」tab：P1-4 过程交换可视化（前端接入）
+
+**来源**：P1-4 Worker 级过程交换已把 dispatcher 每轮任务落 `task_traces` 表，并提供
+`GET /projects/{id}/traces`（默认 5/上限 20，倒序）端点，但前端从未展示——调度轮次的
+失败/超时/死方向只能查库，跨轮次不可视。本次把该端点接到项目侧栏。
+
+**改动**：
+- `graph.html` 项目侧栏新增「轨迹」tab（2 字符，与 §9.4 折行规范匹配）+ 面板：最近 8 轮
+  调度（worker / task_type / outcome 徽章 / 耗时 / 时间戳）；未开项目显示空态提示。
+- `app.js` 声明 `traces`/`tracesLoading`（前端状态守护锁定）。
+- `app.project-detail.js` 新增 `loadTraces()`（openProject 并行拉取，backToList 清空）+
+  展示方法 `traceOutcomeLabel`/`traceOutcomeClass`/`traceDuration`/`traceTime`
+  （`started_at` 为 epoch 秒 → `*1000` 转 Date）。
+- `index.html` v=74→76；`test_frontend_state_guard.py` KEYWORDS 登记 4 个新方法名 +
+  新增 `test_traces_states_declared` 回归 pin。
+- **顺带修复既有缺陷**：`app.js` 补声明 `graphFilterVuln`/`graphFilterConcluded`/`graphFilterBloodline`
+  ——graph 视图三个过滤器状态此前漏声明，打开项目即报 `:class` 首帧 ReferenceError
+  （根因与 pwLoading 同类；守护测试的 `STRONG_ATTR` 正则不覆盖 `:class` 故此前漏过）。
+  新增 `test_graph_filter_states_declared` 显式 pin 防回归。
+
+**验证**：check_methods ✓（487 方法无缺失）；test_frontend_state_guard 10 passed；全量 967 passed；
+check_docs 全绿；Playwright 实测——320px 侧栏 6 个 2 字 tab 单行平铺不折行、轨迹 tab
+空态提示与有记录渲染（worker / outcome 徽章 / 耗时 / 时间戳）均正常。
+**依赖**：数据上报受 P1-4 开关控制；未开时表空，前端显示"暂无调度记录"，不阻塞其它功能。
+
+---
+
 ## 2026-10-21
 
 ### P2｜启动器热重启：dispatcher 自动重拉（SHARP_DISPATCH_AUTO_RESPAWN，默认关闭）——「重启 Dispatcher」按钮名副其实

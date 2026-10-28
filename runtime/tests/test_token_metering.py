@@ -2,14 +2,16 @@
 
 Locks three layers:
 
-- **driver (claudecode)**: the SHARP_TOKEN_METERING gate. OFF keeps the legacy
-  argv byte-for-byte; ON injects `--output-format json`. `extract_response_text`
+- **driver (claudecode)**: the SHARP_TOKEN_METERING gate. Default ON since
+  2026-10-28 — unset env injects `--output-format json`; explicit "0" opts
+  out and keeps the legacy argv byte-for-byte. `extract_response_text`
   unwraps the JSON envelope's `result` field back to model text and falls back
   to raw stdout on any surprise (so the parse chain is never broken).
   `extract_usage` pulls usage/cost metadata, returning None on bad output.
 - **record helper (common)**: `record_task_usage_best_effort` is a no-op when
-  the gate is off, sends exactly one record when on, and swallows every
-  failure — metering must never affect a task outcome.
+  the gate is explicitly disabled ("0"), sends exactly one record when on
+  (including the unset-env default), and swallows every failure — metering
+  must never affect a task outcome.
 - **server**: `POST /usage/record` persists rows into task_usage.
 
 No docker daemon; the server tests use an in-memory temp DB + TestClient.
@@ -91,13 +93,28 @@ class RecordingClient:
 
 def test_metering_off_keeps_legacy_execute_argv():
     d = _driver()
-    r = d.build_execute(_worker(env={}), "prompt", "sess")
+    r = d.build_execute(_worker(env={"SHARP_TOKEN_METERING": "0"}), "prompt", "sess")
     assert r.argv == LEGACY_EXECUTE_ARGV
 
 
 def test_metering_off_keeps_legacy_conclude_argv():
     d = _driver()
-    assert d.build_conclude(_worker(env={}), "prompt", "sess") == LEGACY_CONCLUDE_ARGV
+    assert d.build_conclude(_worker(env={"SHARP_TOKEN_METERING": "0"}), "prompt", "sess") == LEGACY_CONCLUDE_ARGV
+
+
+def test_metering_default_on_injects_json_into_execute():
+    """Unset SHARP_TOKEN_METERING must keep metering ON: the default was
+    flipped 2026-10-28 (opt-out via "0"). Reverting to opt-in makes this red."""
+    d = _driver()
+    r = d.build_execute(_worker(env={}), "prompt", "sess")
+    assert "--output-format" in r.argv
+    assert r.argv.index("--output-format") < r.argv.index("--")
+
+
+def test_metering_default_on_injects_json_into_conclude():
+    d = _driver()
+    argv = d.build_conclude(_worker(env={}), "prompt", "sess")
+    assert "--output-format" in argv
 
 
 # ── driver: gate on injects --output-format json before the `--` separator ─
@@ -167,13 +184,25 @@ def test_extract_usage_none_on_bad_output():
 def test_record_usage_best_effort_disabled_noop():
     client = RecordingClient()
     # stdout carries a VALID usage envelope — the gate (not the parser) is what
-    # must suppress the record when SHARP_TOKEN_METERING is off.
+    # must suppress the record when SHARP_TOKEN_METERING is explicitly "0".
+    envelope = json.dumps({"usage": {"input_tokens": 9}, "total_cost_usd": 0.01})
+    record_task_usage_best_effort(
+        client, _driver(), _worker(env={"SHARP_TOKEN_METERING": "0"}), _result(stdout=envelope),
+        project_id="p1", intent_id="i1", task_type="explore", phase="execute", duration_ms=1,
+    )
+    assert client.recorded == []
+
+
+def test_record_usage_best_effort_default_on_records():
+    """Unset env must record (default ON since 2026-10-28)."""
+    client = RecordingClient()
     envelope = json.dumps({"usage": {"input_tokens": 9}, "total_cost_usd": 0.01})
     record_task_usage_best_effort(
         client, _driver(), _worker(env={}), _result(stdout=envelope),
         project_id="p1", intent_id="i1", task_type="explore", phase="execute", duration_ms=1,
     )
-    assert client.recorded == []
+    assert len(client.recorded) == 1
+    assert client.recorded[0][0]["input_tokens"] == 9
 
 
 # ── record helper: gate on records one row with correct fields ─────────────

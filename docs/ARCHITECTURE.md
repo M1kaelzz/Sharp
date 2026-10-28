@@ -309,14 +309,16 @@ Sharp 由三个角色组成，靠 HTTP + 共享 SQLite 协作：
   决定）；**仅最终失败**才 `best_effort_release`，中间失败不释放（同一 session 还在跑）；
   任一尝试成功走既有写结论路径，findings / 漏洞登记 / 环境基线 / 产品标注一条不丢。
 
-#### 真 token 计量（P1-3，2026-10-19，默认关闭）
+#### 真 token 计量（P1-3，2026-10-19；2026-10-28 起默认开启）
 
 claude 调用用量从"完全不可见"到"逐次落库"的量化基座：
 
-- 开关：`common_env.SHARP_TOKEN_METERING=1`（默认关=旧行为）。开启后每次
-  `claude -p` 注入 `--output-format json`：模型文本移到 JSON 外壳的 `result`
-  字段，usage（input/output/cache_read/cache_creation）+ `total_cost_usd`
-  （客户端估算）随壳返回。
+- 开关：`common_env.SHARP_TOKEN_METERING` —— **2026-10-28 翻转为默认开启**（未设置=开；
+  显式 `"0"` 退回旧行为、零开销）。开启后每次 `claude -p` 注入 `--output-format json`：
+  模型文本移到 JSON 外壳的 `result` 字段，usage（input/output/cache_read/cache_creation）+
+  `total_cost_usd`（客户端估算）随壳返回。直连模式下由两个 node agent-loop 脚本内嵌同语义
+  gate（`!== '0'`），python 侧三处（common 收集入口 / claudecode `_metering_enabled`）与
+  脚本侧一致——测试 `test_record_usage_best_effort_default_on_records` 等钉死默认值不回退。
 - 解包契约：`claudecode.extract_response_text` 负责把 `result` 取回，保证
   **dispatcher 的"stdout=模型 JSON"解析链不被破坏**（损坏/非 JSON 回退原样）。
 - 落库：新表 `task_usage`（纯新增，14 列全带 DEFAULT）+ `POST /usage/record`；
@@ -348,6 +350,9 @@ claude 调用用量从"完全不可见"到"逐次落库"的量化基座：
 - 归档：`runtime.task_trace_archive`（默认 `false`=旧行为）开启时，`_reap_futures`
   收割每轮任务时 best-effort 写一条 `task_traces`（project/intent/worker/task_type/
   outcome/started_at/duration_ms）——统一一处，覆盖全部任务类型，失败静默降级。
+  `started_at` 为 **wall-clock epoch 秒**（`RunningTask.started_at_wall`，2026-10-28 修复：
+  曾误用 monotonic 计数导致 UI 显示 1970；超时/duration 运算仍用 `start_time` 单调钟，
+  守卫测试 `test_trace_started_at_uses_wall_clock_not_monotonic` 钉死两者不得混用）。
 - 读取：`GET /projects/{pid}/traces?limit=N`（新在前，夹取 ≤20）；reason 每轮拉
   最近 5 条注入 `{traces}` 提示词块（⚠=失败/超时/不健康，✓=成功），引导：方向反复
   失败 → 收窄/放弃/abandon；worker 反复 unhealthy → 避免依赖其技术栈。
@@ -776,6 +781,24 @@ mcp_servers:
 - conclude：`claude -r <s> ...`（会话续接）
 - healthcheck **用 Node fetch 而非 curl**：claude-code 本身走 Node 调 API，某些代理网关按 TLS/JA3 指纹过滤，放行 Node 却 502 curl。用 Node 保持传输一致。
 
+**直连 API 执行模式（2026-10-28，`SHARP_DIRECT_API`，默认关）**：
+
+CLI 作 worker 在实战中暴露硬伤——claude/codex CLI 的产品级内容过滤会**静默吞掉攻击意图
+prompt**（退出码 0、输出为空、模型未收到输入），导致攻击任务轮轮空转；而同一模型直连 API
+完全配合。开启直连后绕过 CLI，双适配器以内嵌 node agent-loop 调 API：
+
+- **claudecode**：anthropic tool_use 协议（messages 往返 + bash 工具回填）；会话持久化
+  `/tmp/sharp-sessions/<sid>.jsonl`（conclude 续接）；轮数用尽发一次**无 tools 的强制总结**
+  请求，保证收敛必有输出。
+- **codex**：OpenAI chat-completions（function calling）同机制；direct 模式 `build_execute`
+  自生成 uuid 存入 `DriverResult.session`（SeedSession），`extract_session` 短路透传；
+  新增 `extract_usage`，codex 首次支持计量。
+- **参数化 env**（worker env 注入，双 worker 通用）：`SHARP_AGENT_MAX_ROUNDS`（默认 20）、
+  `SHARP_AGENT_BASH_TIMEOUT`（默认 60s）、`SHARP_AGENT_MAX_TOKENS`（默认 16384——thinking
+  模型烧光过小的 max_tokens 会产出空正文，是 reason 空转循环根因）。
+- node `-e` 脚本的 argv 必须在 `--` 之后传会话参数，否则 `node: bad option`（守卫测试钉死）。
+- 凭据仍走 worker env（token 不进 argv），与 §4 凭据传递约定一致。
+
 **agent 的工具 = 容器镜像里的二进制/脚本**，无 MCP、无结构化工具注册。agent 用 claude-code 内置 Bash 工具直接调命令。加工具 = 往镜像塞 lib/脚本 + 在 `AGENTS.md` 工具目录里写一条（见 `crypto_helper.py` / `session_manager.py` 的做法）。
 
 **凭据传递约定（2026-09-06）**：API key / token **一律不进 argv**（argv 对同机任何进程 `ps` 可见，且单参超 128KB 会 E2BIG）。正确通道：worker 主链的 token 经 docker exec `environment`（worker.env 注入）；healthcheck 与辅助调用从 exec 环境变量读取（node 读 `ANTHROPIC_AUTH_TOKEN`、curl 经 config 文件读 `OPENAI_API_KEY`、pi 由 python 占位符替换注入）；server 聊天流（`android_chat.py stream_llm`）payload 走 stdin、token 走 env。
@@ -1117,14 +1140,14 @@ static/
 │                           #   reports / approvals / app-analysis / chat / newproject /
 │                           #   settings / dispatcher —— 由服务端 include 拼回，拼接结果与
 │                           #   拆分前逐字节一致（tests/test_index_rendering.py）
-├── app.js                  # 组装入口：状态字段声明（完整嵌套形状）+ 11 个模块函数调用 + return（262 行）
+├── app.js                  # 组装入口：状态字段声明（完整嵌套形状）+ 11 个模块函数调用 + return（270 行）
 ├── app.core.js             # 核心：init/api/认证/主题/Toast/格式化/factAutoTags/心跳/Dashboard/导航/成本带（115 方法）
 ├── app.projects.js         # 项目：列表/筛选/星标/标签/资产中心/资产类型/导出/AI报告/删除/重命名/模板（63 方法）
 ├── app.graph.js            # 证据—行动图：Cytoscape/样式/布局/选区/血缘/面板resize + 证据纠错（75 方法）
 ├── app.board.js            # 工作台三视图：行动板分列 + 证据链排序 + 视图切换/resize（17 方法，2026-09-09 新增）
 ├── app.timeline.js         # 时间线：事件构建/排序/渲染/交互/滚动（20 方法）
 ├── app.replay.js           # 回放：帧构建/应用/播放控制/退出（16 方法）
-├── app.project-detail.js   # 项目详情：加载/打开/SSE/轮询/重命名/重开/紧急模式/阶段目标（43 方法）
+├── app.project-detail.js   # 项目详情：加载/打开/SSE/轮询/重命名/重开/紧急模式/阶段目标/调度轨迹（48 方法）
 ├── app.intents.js          # 行动：创建/认领/心跳/释放/结论/完成/提示 + 验收盘点（13 方法）
 ├── app.approvals.js        # 审批中心：列表/统计/详情弹窗/批准/拒绝/紧急模式/SSE（31 方法，2026-08-27 新增）
 ├── app.analyzers.js        # 分析器：小程序分析/Android分析+Chat/派发/筛选（49 方法）
@@ -1170,7 +1193,7 @@ function applyXxxModule(obj) {
 **设计原则**：
 - 状态集中声明在 `app.js`，模块只挂载方法
 - `index.html` 按依赖顺序加载 12 个 JS 文件（模块在前，`app.js` 最后）
-- 版本号统一管理（当前 `v=74`），修改任何 JS 后递增版本号以刷新浏览器缓存
+- 版本号统一管理（当前 `v=76`），修改任何 JS 后递增版本号以刷新浏览器缓存
 - 共 **445 个方法**，跨模块零重复（`scripts/check_methods.py` 校验，HTML 调用 248 处）
 - **状态声明完整性守护（2026-10-20，v2）**：`tests/test_frontend_state_guard.py` 交叉校验模板表达式 vs 声明——两种失败模式：①**根未声明** `x-text` 渲染空白（设置页按钮空白根因，历史三例：`pwLoading/pwError/mcpSaving`、`usageSummary`、`graphActionMenu`）；②**嵌套键缺失** 每次加载刷 TypeError 且 JS 侧 `.trim()` 类直接抛（`secretsForm` 保存静默失败）。v2 覆盖：`views/*.html` + `index.html` 内联模板、链式第二/三段（对象字面量根逐段校验）；解析器对字符串/注释/正则/嵌套模板字面量感知
 - 资产中心（批次 11.4）：`app.projects.js` 的 `toggleAssetsPanel/loadAssets/assetKindBadge` + `assets/assetsLoaded/assetsLoading/assetsPanelOpen/projectAssetFilter` 状态；`filteredProjects()` 支持按 `asset_ref` 精确过滤 + haystack 含资产键/类型

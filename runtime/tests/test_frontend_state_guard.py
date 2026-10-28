@@ -64,6 +64,7 @@ KEYWORDS = {
     "PI_API_KEY", "PI_BASE_URL", "PI_MODEL",
     "SHARP_MODEL", "SHARP_BASE_URL", "SHARP_ANTHROPIC_AUTH_TOKEN",
     "web", "zip", "wxapkg", "xapk", "scored", "pentest", "miniprogram",
+    "traceOutcomeLabel", "traceOutcomeClass", "traceDuration", "traceTime",
 }
 
 STRONG_ATTR = re.compile(
@@ -349,6 +350,26 @@ def test_settings_button_states_declared():
         assert re.search(INDENT4 + re.escape(field) + r"\s*:", src, re.M), (
             f"app.js must declare {field} — templates x-text it; "
             "undeclared = blank button text (the settings-page bug)"
+        )
+
+
+def test_traces_states_declared():
+    """P1-4 轨迹 tab 依赖的 traces/tracesLoading 必须声明（漏声明=轨迹列表空白）。"""
+    src = _read(APP_JS)
+    for field in ("traces", "tracesLoading"):
+        assert re.search(INDENT4 + re.escape(field) + r"\s*:", src, re.M), (
+            f"app.js must declare {field} — graph.html 轨迹 tab 渲染它"
+        )
+
+
+def test_graph_filter_states_declared():
+    """graph 视图三个过滤器状态必须声明：漏声明会致首帧 :class 求值 ReferenceError
+    （graphFilterVuln is not defined）。守护测试的 STRONG_ATTR 不覆盖 :class，
+    故此处用显式 pin 防回归。"""
+    src = _read(APP_JS)
+    for field in ("graphFilterVuln", "graphFilterConcluded", "graphFilterBloodline"):
+        assert re.search(INDENT4 + re.escape(field) + r"\s*:", src, re.M), (
+            f"app.js must declare {field} — graph.html :class 首帧求值会 ReferenceError"
         )
 
 

@@ -512,6 +512,10 @@
           实时
           <span x-show="liveOutput.active" class="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-teal-500 animate-pulse"></span>
         </button>
+        <button @click="sideTab = 'traces'" class="flex-1 px-3 py-2.5 text-xs font-medium transition"
+          :class="sideTab === 'traces' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600'">
+          轨迹
+        </button>
       </div>
 
       <!-- Detail -->
@@ -985,6 +989,43 @@
                 <p class="text-[11px] text-slate-400 mt-1 break-words" x-text="[entry.actor, ...entry.meta].filter(Boolean).join(' · ')"></p>
               </template>
             </button>
+          </div>
+        </template>
+      </div>
+
+      <!-- Traces -->
+      <div x-show="sideTab === 'traces'" class="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/40">
+        <template x-if="!selectedProjectId">
+          <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-5 py-10 text-center shadow-sm">
+            <p class="text-sm text-slate-400">打开项目后查看调度轨迹</p>
+          </div>
+        </template>
+        <template x-if="selectedProjectId">
+          <div class="space-y-2">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wider">调度轨迹</h3>
+              <span x-show="tracesLoading" class="text-[10px] text-slate-400">加载中…</span>
+            </div>
+            <template x-if="!tracesLoading && traces.length === 0">
+              <div class="rounded-2xl border border-dashed border-slate-200 bg-white/80 px-4 py-8 text-center shadow-sm">
+                <p class="text-xs text-slate-400">暂无调度记录</p>
+                <p class="text-[10px] text-slate-300 mt-1">调度器在每轮任务结束时上报（P1-4 过程交换）</p>
+              </div>
+            </template>
+            <template x-for="(t, i) in traces" :key="i">
+              <article class="rounded-2xl border border-slate-200 bg-white shadow-sm p-3">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-[11px] font-mono text-slate-600 truncate" x-text="t.worker_name || '—'"></span>
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0"
+                    :class="traceOutcomeClass(t.outcome)" x-text="traceOutcomeLabel(t.outcome)"></span>
+                </div>
+                <div class="mt-2 text-[11px] text-slate-400 space-y-0.5">
+                  <p x-text="`任务：${t.task_type || '—'}`"></p>
+                  <p x-text="`耗时：${traceDuration(t.duration_ms)}`"></p>
+                  <p x-text="`时间：${traceTime(t.started_at)}`"></p>
+                </div>
+              </article>
+            </template>
           </div>
         </template>
       </div>
