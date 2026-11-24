@@ -266,5 +266,3 @@ python3 ../scripts/check_methods.py              # 前端 Alpine 方法完整性
 - 本开源包按 **AGPL-3.0** 发布，详见 `LICENSE`。
 - 另有**商业授权**（Ed25519 离线授权）用于桌面发行版，见 `docs/OPENSOURCE_RELEASE.md`。
 - 第三方组件许可见 `THIRD_PARTY_NOTICES.md`。
-
-> AI生成

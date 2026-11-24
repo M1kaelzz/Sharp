@@ -289,5 +289,3 @@ python3 ../scripts/check_docs.py                 # docs ↔ code consistency
 AGPL-3.0 (`LICENSE`). Third-party components and their licenses: `THIRD_PARTY_NOTICES.md`.
 A commercial license (Ed25519 offline signing) covers the desktop distribution — see
 `docs/OPENSOURCE_RELEASE.md`.
-
-> AI生成
